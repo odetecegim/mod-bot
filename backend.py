@@ -59,7 +59,6 @@ class QAReportWorker:
         self.log(f"Filtreler uygulanıyor: Yıl={self.selected_year}, Ay={self.selected_month_str}, Dil={self.selected_lang}")
         self.progress(60)
 
-        # Örnek işleme mantığı (Kendi eşleştirme mantığınızı buraya entegre edebilirsiniz)
         processed_count = len(source_data)
         
         self.log(f"Toplam {processed_count} kayıt başarıyla işlendi.")
