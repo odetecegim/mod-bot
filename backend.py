@@ -20,14 +20,15 @@ MONTH_MAP = {
 }
 
 def normalize_text(text):
-    """Metinleri küçük harfe çevirir, Türkçe ve İspanyolca özel karakterleri temizler."""
+    """Metinleri küçük harfe çevirir, Türkçe, İspanyolca ve Portekizce karakterleri temizler."""
     if not text:
         return ""
     text = str(text).strip().lower()
     replacements = {
         'ı': 'i', 'İ': 'i', 'ğ': 'g', 'Ğ': 'g', 'ü': 'u', 'Ü': 'u',
         'ş': 's', 'Ş': 's', 'ö': 'o', 'Ö': 'o', 'ç': 'c', 'Ç': 'c',
-        'ñ': 'n', 'á': 'a', 'é': 'e', 'í': 'i', 'ó': 'o', 'ú': 'u'
+        'ñ': 'n', 'á': 'a', 'é': 'e', 'í': 'i', 'ó': 'o', 'ú': 'u',
+        'ã': 'a', 'õ': 'o', 'â': 'a', 'ê': 'e', 'ô': 'o'
     }
     for k, v in replacements.items():
         text = text.replace(k, v)
@@ -35,37 +36,40 @@ def normalize_text(text):
     text = re.sub(r'[^a-z0-9\s]', '', text)
     return re.sub(r'\s+', ' ', text).strip()
 
-def are_names_matching(target_name, src_name):
+def calculate_name_similarity(target_name, src_name):
     """
-    "Mert Efe Künç" <-> "Efe Künç" / "Mert Künç" / "mert efe" gibi eksik isim ve soyisim 
-    kullanımlarını doğru eşleştiren algoritma.
+    İki isim arasındaki benzerlik puanını hesaplar.
+    "Mert Efe Künç" vs "Efe Künç" -> Yüksek Puan
+    "Mert Efe Künç" vs "Mert Künç" -> Yüksek Puan
     """
     t_norm = normalize_text(target_name)
     s_norm = normalize_text(src_name)
     
     if not t_norm or not s_norm:
-        return False
+        return 0.0
     
     if t_norm == s_norm:
-        return True
+        return 1.0
     
-    t_tokens = t_norm.split()
-    s_tokens = s_norm.split()
+    t_tokens = set(t_norm.split())
+    s_tokens = set(s_norm.split())
     
-    # Kaynak isimdeki kelimeler hedef isimde geçiyor mu?
-    if all(tok in t_tokens for tok in s_tokens if len(tok) >= 2):
-        return True
-        
-    # Hedef isimdeki kelimeler kaynak isimde geçiyor mu?
-    if all(tok in s_tokens for tok in t_tokens if len(tok) >= 2):
-        return True
+    if not t_tokens or not s_tokens:
+        return 0.0
 
-    # Soyisim ve en az bir isim parçası eşleşiyor mu?
-    common_tokens = [tok for tok in set(t_tokens).intersection(set(s_tokens)) if len(tok) >= 3]
-    if len(common_tokens) >= 2:
-        return True
+    # Ortak kelime sayısı
+    intersection = t_tokens.intersection(s_tokens)
+    if not intersection:
+        return 0.0
 
-    return False
+    # Kaynaktaki tüm kelimeler hedefte varsa tam uyum kabul et
+    if s_tokens.issubset(t_tokens):
+        return 0.95
+    if t_tokens.issubset(s_tokens):
+        return 0.90
+
+    # Jaccard benzerlik skoru
+    return len(intersection) / float(len(t_tokens.union(s_tokens)))
 
 def get_available_spreadsheets(creds_input):
     if isinstance(creds_input, dict):
@@ -120,7 +124,6 @@ class QAReportWorker:
         return None
 
     def get_target_worksheet(self, report_wb):
-        """Dile uygun hedef sekmeyi bulur (Örn: ESP TEMMUZ 2026)."""
         all_worksheets = report_wb.worksheets()
         target_lang = self.selected_lang.lower().strip()
         target_month = self.selected_month_str.lower().strip()
@@ -144,7 +147,6 @@ class QAReportWorker:
         return report_wb.sheet1
 
     def count_user_reports_in_sheet(self, sheet):
-        """Kullanıcı rapor sayılarını hesaplar."""
         raw_rows = sheet.get_all_values()
         if not raw_rows or len(raw_rows) <= 1:
             return Counter()
@@ -156,7 +158,7 @@ class QAReportWorker:
         user_col_idx = -1
 
         for idx, h in enumerate(headers):
-            if any(u in h for u in ["name-surname", "name", "surname", "ad soyad", "kullanıcı", "user", "reporter", "nombre"]):
+            if any(u in h for u in ["name-surname", "name", "surname", "ad soyad", "kullanıcı", "user", "reporter", "nombre", "apelido", "nick"]):
                 user_col_idx = idx
                 break
         if user_col_idx == -1:
@@ -201,32 +203,33 @@ class QAReportWorker:
         source_worksheets = source_wb.worksheets()
         category_counts = {}
 
-        # 1. Kaynak Sekmeleri Türkçe Türkçe Sütun Başlıklarıyla Eşleştir
+        # 1. POR ve ESP İçin Tüm Sekmelerin Sütun Haritasını Çıkar
         for ws in source_worksheets:
             ws_title = ws.title.strip()
             title_lower = ws_title.lower()
 
-            # 0 Kullanıcı Testi Tamamen Atlanır
             if any(term in title_lower for term in ["0 kullanıcı", "0 kul", "new user test", "prueba de usuario nuevo"]):
                 self.log(f"🚫 Pas geçildi: [{ws_title}] (0 Kullanıcı Testi işlenmeyecek)")
                 continue
 
-            # Türkçe Sütun İsimlerine Haritalama
+            # ESP & POR sekmelerini Türkçe başlıklarla eşleştir
             target_col_name = ""
-            if any(term in title_lower for term in ["tarjeta de misión", "mission card", "zula pass", "g.görev", "pass"]):
+            if any(term in title_lower for term in ["tarjeta de misión", "mission card", "zula pass", "g.görev", "pass", "missao"]):
                 target_col_name = "Zula Pass"
-            elif any(term in title_lower for term in ["revisión general", "general check", "genel", "g.kontrol"]):
+            elif any(term in title_lower for term in ["revisión general", "relatório de erros", "general check", "genel", "g.kontrol", "geral"]):
                 target_col_name = "Genel"
             else:
                 target_col_name = ws_title
 
-            self.log(f"📊 Kaynak Sekme: [{ws_title}] ➔ Ana Tablo Türkçe Sütun: '{target_col_name}'")
+            self.log(f"📊 Kaynak Sekme: [{ws_title}] ➔ Ana Tablo Sütun: '{target_col_name}'")
             user_counts = self.count_user_reports_in_sheet(ws)
-            category_counts[target_col_name] = user_counts
+            
+            if target_col_name not in category_counts:
+                category_counts[target_col_name] = Counter()
+            category_counts[target_col_name].update(user_counts)
 
         self.progress(60)
 
-        # 2. Ana Tablodaki Türkçe Başlıkları ve Kullanıcı Sütununu Oku
         target_rows = target_sheet.get_all_values()
         if not target_rows:
             self.log("⚠️ Ana tabloda veri/başlık bulunamadı!")
@@ -237,7 +240,7 @@ class QAReportWorker:
         
         user_col_in_target = 0
         for idx, h in enumerate(target_headers):
-            if any(k in h.lower() for k in ["kullanıcı", "user", "name", "qa", "ad", "nombre"]):
+            if any(k in h.lower() for k in ["kullanıcı", "user", "name", "qa", "ad", "nombre", "apelido"]):
                 user_col_in_target = idx
                 break
 
@@ -248,39 +251,44 @@ class QAReportWorker:
                     col_index_map[cat_name] = idx
                     break
 
+        # Ana tablodaki kullanıcı isimlerini topla
+        target_users = []
+        for row_idx, row in enumerate(target_rows[1:], start=2):
+            if row and user_col_in_target < len(row):
+                u_name = str(row[user_col_in_target]).strip()
+                if u_name:
+                    target_users.append((row_idx, u_name))
+
         cell_updates = []
         
-        # 3. İsim ve Soyisim Bazlı Akıllı Eşleştirme Yapıp Verileri Aktar
-        for row_idx, row in enumerate(target_rows[1:], start=2):
-            if not row or user_col_in_target >= len(row):
+        # 2. Her Sütun ve Kullanıcı İçin En İyi Eşleşmeyi Hesapla
+        for cat_name, u_counts in category_counts.items():
+            if cat_name not in col_index_map:
                 continue
+                
+            target_c_idx = col_index_map[cat_name]
             
-            target_user_name = str(row[user_col_in_target]).strip()
-            if not target_user_name:
-                continue
+            # Ana tablodaki her kullanıcı için kaynak verileri tarayarak puan topla
+            for row_idx, t_name in target_users:
+                total_score = 0
+                for src_name, count in u_counts.items():
+                    sim_score = calculate_name_similarity(t_name, src_name)
+                    # Benzerlik eşiği 0.50 ve üzeri ise eşleşmiş kabul et
+                    if sim_score >= 0.50:
+                        total_score += count
 
-            for cat_name, u_counts in category_counts.items():
-                if cat_name in col_index_map:
-                    target_c_idx = col_index_map[cat_name]
-                    
-                    matched_count = 0
-                    for src_user_name, count in u_counts.items():
-                        if are_names_matching(target_user_name, src_user_name):
-                            matched_count += count
-                    
-                    cell_updates.append({
-                        'range': gspread.utils.rowcol_to_a1(row_idx, target_c_idx + 1),
-                        'values': [[matched_count if matched_count > 0 else ""]]
-                    })
+                cell_updates.append({
+                    'range': gspread.utils.rowcol_to_a1(row_idx, target_c_idx + 1),
+                    'values': [[total_score if total_score > 0 else ""]]
+                })
 
         self.progress(85)
 
-        # 4. Ana Tabloya Güncellemeleri Biçimlendirmeleri Bozmadan Yaz
         if cell_updates:
-            self.log(f"İsimler eşleştirildi. Veriler Türkçe ana tablodaki [{target_sheet.title}] sekmesine yazılıyor...")
+            self.log(f"İsimler ve kategoriler eşleştirildi. Veriler [{target_sheet.title}] sekmesine aktarılıyor...")
             target_sheet.batch_update(cell_updates)
             self.progress(100)
-            self.log(f"✅ İŞLEM BAŞARILI! Tüm İspanyolca sekmeler Türkçe sütunlara ve doğru kullanıcı isimlerine aktarıldı.")
+            self.log(f"✅ İŞLEM BAŞARILI! POR ve ESP verileri tüm sütunlara doğru şekilde yazıldı.")
         else:
             self.progress(100)
-            self.log(f"⚠️ [{target_sheet.title}] sekmesinde eşleşen veri bulunamadı.")
+            self.log(f"⚠️ [{target_sheet.title}] sekmesinde işlenecek veri bulunamadı.")
