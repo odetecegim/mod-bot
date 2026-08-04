@@ -15,9 +15,9 @@ MONTH_MAP = {
 def get_available_spreadsheets(creds_input):
     """
     Drive üzerindeki tüm tabloları getirir.
-    Rapor ve Kaynak tablolarını kesin kurallarla ayırır:
-    - Adında 'rapor' veya 'report' geçenler -> Yalnızca Rapor Tablosu
-    - Adında 'rapor' geçmeyenler (örneğin POR, ENG, ESP takip tabloları) -> Yalnızca Kaynak Tablo
+    Rapor ve Kaynak tablolarını ayrıştırır:
+    - Adında 'rapor', 'report' veya 'relatório' (Relatório de erros POR vb.) geçenler -> Rapor Tablosu
+    - Diğer ana takip dosyaları -> Kaynak Tablo
     """
     if isinstance(creds_input, dict):
         creds = Credentials.from_service_account_info(creds_input, scopes=SCOPES)
@@ -32,14 +32,17 @@ def get_available_spreadsheets(creds_input):
     report_sheets = {}
     source_sheets = {}
 
+    # Rapor kelimesi içeren anahtar kelimeler (TR, ENG, POR)
+    report_keywords = ["rapor", "report", "relatório", "relatorio"]
+
     for name, fid in all_sheets.items():
         name_lower = name.lower()
-        if "rapor" in name_lower or "report" in name_lower:
+        if any(keyword in name_lower for keyword in report_keywords):
             report_sheets[name] = fid
         else:
             source_sheets[name] = fid
 
-    # Eğer hiçbir dosyada 'Rapor' ibaresi yoksa çökmemesi için güvenlik önlemi
+    # Güvenlik önlemleri
     if not report_sheets:
         report_sheets = all_sheets.copy()
     if not source_sheets:
