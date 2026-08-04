@@ -6,10 +6,211 @@ from backend import QAReportWorker, get_available_spreadsheets
 
 # Sayfa Yapılandırması
 st.set_page_config(
-    page_title="QA Raporlama Paneli",
-    page_icon="📊",
-    layout="centered"
+    page_title="Control Center — Zula Teşkilat Girişi",
+    page_icon="🔴",
+    layout="centered",
+    initial_sidebar_state="collapsed"
 )
+
+# --- ŞİFRE VE OTURUM KONTROLÜ (ZULA TEŞKİLAT TEMASI) ---
+def login_screen():
+    # Mouse Takip Efekti (JavaScript) + Zula Arka Planı ve Kırmızı Askeri Tema (CSS)
+    st.markdown("""
+        <style>
+            /* ZULA ARKA PLAN LOGOSU VE KARARTMA */
+            .stApp {
+                background: linear-gradient(rgba(10, 10, 12, 0.88), rgba(10, 10, 12, 0.95)),
+                            url('https://images.alphacoders.com/849/849204.png') no-repeat center center fixed !important;
+                background-size: cover !important;
+            }
+
+            .main {
+                display: flex;
+                justify-content: center;
+                align-items: center;
+            }
+            .block-container {
+                padding-top: 2rem !important;
+                padding-bottom: 2rem !important;
+                max-width: 480px !important;
+            }
+
+            /* İKON KUTUSU (KIRMIZI ZULA IŞILTISI) */
+            .icon-box {
+                background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%);
+                width: 80px;
+                height: 80px;
+                border-radius: 20px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                margin: 0 auto 1.2rem auto;
+                box-shadow: 0 0 35px rgba(220, 38, 38, 0.6);
+                border: 2px solid #ef4444;
+            }
+            .icon-box img {
+                width: 50px;
+                height: 50px;
+                object-fit: contain;
+            }
+
+            /* BAŞLIKLAR */
+            .title-text {
+                text-align: center;
+                font-size: 28px;
+                font-weight: 800;
+                color: #ffffff;
+                letter-spacing: 1px;
+                text-shadow: 0 0 10px rgba(220, 38, 38, 0.5);
+                margin-bottom: 4px;
+                font-family: 'Arial Black', sans-serif;
+            }
+            .subtitle-text {
+                text-align: center;
+                font-size: 13px;
+                color: #9ca3af;
+                letter-spacing: 0.5px;
+                margin-bottom: 1.8rem;
+            }
+
+            /* GİRİŞ KART-FORMU (METALİK KOYU TEMALI) */
+            div[data-testid="stForm"] {
+                background: rgba(18, 18, 22, 0.85) !important;
+                border: 1px solid rgba(220, 38, 38, 0.3) !important;
+                border-radius: 16px !important;
+                padding: 2rem !important;
+                box-shadow: 0 15px 35px rgba(0, 0, 0, 0.8), 0 0 15px rgba(220, 38, 38, 0.15) !important;
+                backdrop-filter: blur(10px);
+            }
+
+            /* INPUT ETİKETLERİ VE GİRDİ ALANI */
+            label {
+                color: #ef4444 !important;
+                font-size: 11px !important;
+                font-weight: 800 !important;
+                letter-spacing: 0.1em !important;
+                text-transform: uppercase !important;
+            }
+            div[data-baseweb="input"] {
+                background-color: #0d0d11 !important;
+                border: 1px solid #27272a !important;
+                border-radius: 8px !important;
+                color: #ffffff !important;
+            }
+            div[data-baseweb="input"]:focus-within {
+                border-color: #ef4444 !important;
+                box-shadow: 0 0 10px rgba(239, 68, 68, 0.4) !important;
+            }
+
+            /* GİRİŞ YAP BUTONU (KIRMIZI ASKERİ STİL) */
+            div[data-testid="stFormSubmitButton"] > button {
+                background: linear-gradient(90deg, #dc2626 0%, #991b1b 100%) !important;
+                color: white !important;
+                border: 1px solid #f87171 !important;
+                border-radius: 8px !important;
+                height: 50px !important;
+                font-weight: 700 !important;
+                font-size: 16px !important;
+                letter-spacing: 1px !important;
+                text-transform: uppercase !important;
+                box-shadow: 0 4px 20px rgba(220, 38, 38, 0.4) !important;
+                transition: all 0.2s ease !important;
+            }
+            div[data-testid="stFormSubmitButton"] > button:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 6px 25px rgba(220, 38, 38, 0.7) !important;
+                background: linear-gradient(90deg, #ef4444 0%, #dc2626 100%) !important;
+            }
+
+            /* ALT BİLGİ METNİ */
+            .footer-text {
+                text-align: center;
+                font-size: 12px;
+                color: #6b7280;
+                margin-top: 1.5rem;
+            }
+            .footer-text span {
+                color: #ef4444;
+                font-weight: 700;
+            }
+        </style>
+
+        <!-- MOUSE TAKİP EDEN KIRMIZI YILDIZ / KIVILCIM EFEKTİ (JAVASCRIPT) -->
+        <script>
+            document.addEventListener('mousemove', function(e) {
+                let star = document.createElement('div');
+                star.className = 'star-particle';
+                star.innerHTML = '★'; // Kırmızı Yıldız efekti
+                
+                // Fare koordinatları
+                star.style.left = e.clientX + 'px';
+                star.style.top = e.clientY + 'px';
+                
+                // Rastgele boyut ve dönüş
+                let size = Math.random() * 12 + 10;
+                star.style.fontSize = size + 'px';
+                star.style.position = 'fixed';
+                star.style.color = '#ef4444';
+                star.style.textShadow = '0 0 8px #dc2626, 0 0 15px #ff0000';
+                star.style.pointerEvents = 'none';
+                star.style.zIndex = '999999';
+                star.style.transition = 'all 0.6s linear';
+                star.style.transform = `translate(-50%, -50%) rotate(${Math.random() * 360}deg)`;
+                star.style.opacity = '1';
+                
+                document.body.appendChild(star);
+                
+                setTimeout(() => {
+                    star.style.top = (e.clientY + 20) + 'px';
+                    star.style.opacity = '0';
+                    star.style.transform += ' scale(0.3)';
+                }, 50);
+                
+                setTimeout(() => {
+                    star.remove();
+                }, 600);
+            });
+        </script>
+    """, unsafe_allow_html=True)
+
+    # Teşkilat Logosu ve Başlıklar
+    st.markdown('<div class="icon-box"><img src="https://zulaoyun.com/assets/images/logo.png" alt="Zula Logo"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="title-text">TEŞKİLAT CONTROL CENTER</div>', unsafe_allow_html=True)
+    st.markdown('<div class="subtitle-text">Yetkili Yönetici Girişi</div>', unsafe_allow_html=True)
+
+    # Giriş Formu Kartı
+    with st.form("login_form"):
+        password_input = st.text_input("YÖNETİCİ ŞİFRESİ", type="password", placeholder="••••••••••••")
+        submit = st.form_submit_button("🎯 ONAYLA VE GİRİŞ YAP", use_container_width=True)
+
+        if submit:
+            admin_pass = st.secrets.get("ADMIN_PASSWORD", "123456")
+            if password_input == admin_pass:
+                st.session_state["authenticated"] = True
+                st.rerun()
+            else:
+                st.error("❌ Yetkisiz Giriş! Şifre Hatalı.")
+
+    st.markdown('<div class="footer-text">Oturum <span>12 saat</span> boyunca aktif kalır</div>', unsafe_allow_html=True)
+
+# Oturum Kontrolü
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+
+if not st.session_state["authenticated"]:
+    login_screen()
+    st.stop()
+
+
+# ==============================================================================
+# === GİRİŞ YAPILDISAN SONRA GÖRÜNECEK ANA PANEL ===
+# ==============================================================================
+
+col_title, col_logout = st.columns([4, 1])
+with col_logout:
+    if st.button("🚪 Çıkış Yap"):
+        st.session_state["authenticated"] = False
+        st.rerun()
 
 st.title("📊 QA Görev Raporlama Paneli")
 st.caption("Google Sheets verilerini seçilen Ay ve Yıl'a göre otomatik eşleştirin ve güncelleyin.")
@@ -17,15 +218,11 @@ st.caption("Google Sheets verilerini seçilen Ay ve Yıl'a göre otomatik eşle�
 # --- GOOGLE CREDENTIALS YÖNETİMİ ---
 @st.cache_resource
 def get_credentials():
-    # 1. GCP_SERVICE_ACCOUNT Secrets Kontrolü (TOML Objesi, Base64 veya String)
     if "GCP_SERVICE_ACCOUNT" in st.secrets:
         try:
             sec = st.secrets["GCP_SERVICE_ACCOUNT"]
-            
-            # Streamlit secrets objesi (AttrDict/dict) ise:
             if isinstance(sec, (dict, st.runtime.secrets.AttrDict)):
                 creds = dict(sec)
-            # Düz string veya Base64 metin ise:
             elif isinstance(sec, str):
                 try:
                     decoded = base64.b64decode(sec).decode('utf-8')
@@ -35,7 +232,6 @@ def get_credentials():
             else:
                 creds = dict(sec)
 
-            # Private Key format düzeltmesi (PEM Hatasını engeller)
             if "private_key" in creds:
                 pk = str(creds["private_key"])
                 pk = pk.replace("\\n", "\n").strip()
@@ -47,15 +243,11 @@ def get_credentials():
         except Exception as e:
             st.error(f"Secrets okuma hatası: {e}")
             return None
-
-    # 2. GOOGLE_CREDENTIALS Secrets Kontrolü (Alternatif)
     elif "GOOGLE_CREDENTIALS" in st.secrets:
         creds = dict(st.secrets["GOOGLE_CREDENTIALS"])
         if "private_key" in creds:
             creds["private_key"] = str(creds["private_key"]).replace("\\n", "\n")
         return creds
-
-    # 3. Yerel Dosya Kontrolü
     elif os.path.exists("credentials.json"):
         return "credentials.json"
     else:
@@ -89,7 +281,7 @@ with st.form("qa_form"):
     with col3:
         selected_lang = st.selectbox("Dil", ["Tümü", "ENG", "ESP", "POR", "TR"])
     with col4:
-        months = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylul", "Ekim", "Kasım", "Aralık"]
+        months = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
         selected_month = st.selectbox("Ay", months, index=6)
     with col5:
         selected_year = st.selectbox("Yıl", ["2025", "2026", "2027"], index=1)
