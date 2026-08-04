@@ -14,6 +14,7 @@ st.set_page_config(
 
 # --- ŞİFRE VE OTURUM KONTROLÜ (ZULA TEŞKİLAT TEMASI) ---
 def login_screen():
+    # Mouse Takip Efekti (JavaScript) + Zula Arka Planı ve Kırmızı Askeri Tema (CSS)
     st.markdown("""
         <style>
             /* ZULA ARKA PLAN LOGOSU VE KARARTMA */
@@ -34,7 +35,7 @@ def login_screen():
                 max-width: 480px !important;
             }
 
-            /* İKON KUTUSU */
+            /* İKON KUTUSU (KIRMIZI IŞILTILI TEŞKİLAT LOGOSU) */
             .icon-box {
                 background: linear-gradient(135deg, #dc2626 0%, #7f1d1d 100%);
                 width: 90px;
@@ -74,7 +75,7 @@ def login_screen():
                 margin-bottom: 1.8rem;
             }
 
-            /* GİRİŞ KART-FORMU */
+            /* GİRİŞ KART-FORMU (METALİK KOYU TEMALI) */
             div[data-testid="stForm"] {
                 background: rgba(18, 18, 22, 0.85) !important;
                 border: 1px solid rgba(220, 38, 38, 0.3) !important;
@@ -84,7 +85,7 @@ def login_screen():
                 backdrop-filter: blur(10px);
             }
 
-            /* INPUT VE ETİKET */
+            /* INPUT ETİKETLERİ VE GİRDİ ALANI */
             label {
                 color: #ef4444 !important;
                 font-size: 11px !important;
@@ -103,7 +104,7 @@ def login_screen():
                 box-shadow: 0 0 10px rgba(239, 68, 68, 0.4) !important;
             }
 
-            /* BUTON */
+            /* GİRİŞ YAP BUTONU (KIRMIZI ASKERİ STİL) */
             div[data-testid="stFormSubmitButton"] > button {
                 background: linear-gradient(90deg, #dc2626 0%, #991b1b 100%) !important;
                 color: white !important;
@@ -136,7 +137,7 @@ def login_screen():
             }
         </style>
 
-        <!-- MOUSE TAKİP EDEN KIRMIZI YILDIZ EFEKTİ -->
+        <!-- MOUSE TAKİP EDEN KIRMIZI YILDIZ EFEKTİ (JAVASCRIPT) -->
         <script>
             document.addEventListener('mousemove', function(e) {
                 let star = document.createElement('div');
@@ -172,15 +173,18 @@ def login_screen():
         </script>
     """, unsafe_allow_html=True)
 
+    # Teşkilat Logosu ve Başlıklar
     st.markdown('<div class="icon-box"><img src="https://i.ibb.co/JRkyN71r/logo.png" alt="Teşkilat Logo"></div>', unsafe_allow_html=True)
     st.markdown('<div class="title-text">TEŞKİLAT CONTROL CENTER</div>', unsafe_allow_html=True)
     st.markdown('<div class="subtitle-text">Yetkili Yönetici Girişi</div>', unsafe_allow_html=True)
 
+    # Giriş Formu Kartı
     with st.form("login_form"):
         password_input = st.text_input("YÖNETİCİ ŞİFRESİ", type="password", placeholder="••••••••••••")
         submit = st.form_submit_button("🎯 ONAYLA VE GİRİŞ YAP", use_container_width=True)
 
         if submit:
+            # Şifre kontrolü: Varsayılan "akademi2026", yoksa Secrets alanındaki ADMIN_PASSWORD
             admin_pass = st.secrets.get("ADMIN_PASSWORD", "akademi2026")
             if password_input == admin_pass:
                 st.session_state["authenticated"] = True
@@ -197,6 +201,7 @@ if "authenticated" not in st.session_state:
 if not st.session_state["authenticated"]:
     login_screen()
     st.stop()
+
 
 # ==============================================================================
 # === GİRİŞ YAPILDISAN SONRA GÖRÜNECEK ANA PANEL ===
@@ -255,15 +260,10 @@ if not creds_input:
     st.error("❌ Google bağlantı bilgileri bulunamadı! Lütfen Streamlit Secrets ayarlarını kontrol edin.")
     st.stop()
 
-# --- TABLOLARI LİSTELE VE AYRIŞTIR ---
+# --- TABLOLARI LİSTELE ---
 try:
-    sheets_data = get_available_spreadsheets(creds_input)
-    source_sheets_dict = sheets_data["source"]
-    report_sheets_dict = sheets_data["report"]
-    all_sheets_dict = sheets_data["all"]
-    
-    source_options = list(source_sheets_dict.keys())
-    report_options = list(report_sheets_dict.keys())
+    spreadsheet_dict = get_available_spreadsheets(creds_input)
+    sheet_names = list(spreadsheet_dict.keys())
 except Exception as e:
     st.error(f"Google Drive bağlantı hatası: {e}")
     st.stop()
@@ -273,16 +273,16 @@ with st.form("qa_form"):
     col1, col2 = st.columns(2)
     
     with col1:
-        source_name = st.selectbox("Kaynak Tablo (Source Sheet)", options=source_options)
+        source_name = st.selectbox("Kaynak Tablo (Source Sheet)", options=sheet_names)
     with col2:
-        report_name = st.selectbox("Rapor Tablosu (Report Sheet)", options=report_options)
+        report_name = st.selectbox("Rapor Tablosu (Report Sheet)", options=sheet_names)
 
     col3, col4, col5 = st.columns(3)
     
     with col3:
         selected_lang = st.selectbox("Dil", ["Tümü", "ENG", "ESP", "POR", "TR"])
     with col4:
-        months = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylul", "Ekim", "Kasım", "Aralık"]
+        months = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
         selected_month = st.selectbox("Ay", months, index=6)
     with col5:
         selected_year = st.selectbox("Yıl", ["2025", "2026", "2027"], index=1)
@@ -291,8 +291,8 @@ with st.form("qa_form"):
 
 # --- İŞLEM BAŞLATMA VE LOG EKRANI ---
 if submit_button:
-    source_id = source_sheets_dict[source_name]
-    report_id = report_sheets_dict[report_name]
+    source_id = spreadsheet_dict[source_name]
+    report_id = spreadsheet_dict[report_name]
 
     progress_bar = st.progress(0)
     log_box = st.code("> İşlem başlatıldı...\n", language="bash")
