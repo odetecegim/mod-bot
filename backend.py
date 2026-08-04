@@ -11,35 +11,48 @@ SCOPES = [
 ]
 
 MONTH_MAP = {
+    # Türkçe
     "ocak": 1, "şubat": 2, "mart": 3, "nisan": 4, "mayıs": 5, "haziran": 6,
     "temmuz": 7, "ağustos": 8, "eylül": 9, "ekim": 10, "kasım": 11, "aralık": 12,
+    # İngilizce
     "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
     "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12,
+    # İspanyolca / Portekizce
     "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
-    "julio": 7, "agosto": 8, "septiembre": 9, "octubre": 10, "noviembre": 11, "diciembre": 12
+    "julio": 7, "agosto": 8, "septiembre": 9, "octubre": 10, "noviembre": 11, "diciembre": 12,
+    "janeiro": 1, "fevereiro": 2, "marco": 3, "maio": 5, "junho": 6,
+    "julho": 7, "agosto": 8, "setembro": 9, "outubro": 10, "novembro": 11, "dezembro": 12
 }
 
 def normalize_text(text):
-    """Metinleri küçük harfe çevirir; Türkçe, Portekizce ve İspanyolca karakterleri temizler."""
+    """
+    Metinleri tamamen küçük harfe çevirir; harf büyüklüğü/küçüklüğü fark etmeksizin 
+    Türkçe, Portekizce, İspanyolca özel karakterleri standartlaştırır.
+    """
     if not text:
         return ""
+    # 1. Küçük harfe çevirme (Türkçe 'İ' ve 'I' harfleri dahil)
     text = str(text).strip().lower()
+    
+    # 2. Özel karakterlerin temizlenmesi
     replacements = {
-        'ı': 'i', 'İ': 'i', 'ğ': 'g', 'Ğ': 'g', 'ü': 'u', 'Ü': 'u',
-        'ş': 's', 'Ş': 's', 'ö': 'o', 'Ö': 'o', 'ç': 'c', 'Ç': 'c',
+        'ı': 'i', 'i̇': 'i', 'ğ': 'g', 'ü': 'u',
+        'ş': 's', 'ö': 'o', 'ç': 'c',
         'ñ': 'n', 'á': 'a', 'é': 'e', 'í': 'i', 'ó': 'o', 'ú': 'u',
         'ã': 'a', 'õ': 'o', 'â': 'a', 'ê': 'e', 'ô': 'o', 'à': 'a'
     }
     for k, v in replacements.items():
         text = text.replace(k, v)
+        
+    # 3. Aksan ve noktalama işaretlerini kaldırma
     text = unicodedata.normalize('NFKD', text).encode('ASCII', 'ignore').decode('utf-8')
     text = re.sub(r'[^a-z0-9\s]', '', text)
     return re.sub(r'\s+', ' ', text).strip()
 
 def calculate_name_similarity(target_name, src_name):
     """
-    İki isim arasındaki benzerlik puanını hesaplar.
-    Örn: "Mert Efe Künç" ile "Efe Künç" veya "Mert Künç" isimlerini eşleştirir.
+    Küçük/büyük harf veya eksik isim kullanımlarına duyarlı benzerlik algoritması.
+    "Mert Efe Künç" <-> "efe künç" / "mert kunc" gibi kullanımları eşleştirir.
     """
     t_norm = normalize_text(target_name)
     s_norm = normalize_text(src_name)
@@ -47,6 +60,7 @@ def calculate_name_similarity(target_name, src_name):
     if not t_norm or not s_norm:
         return 0.0
     
+    # Birebir eşleşme (Küçük harf normalize edildikten sonra)
     if t_norm == s_norm:
         return 1.0
     
@@ -60,11 +74,15 @@ def calculate_name_similarity(target_name, src_name):
     if not intersection:
         return 0.0
 
-    # Kaynaktaki tüm kelimeler (örn: Efe Künç) hedef isimde (Mert Efe Künç) geçiyorsa tam eşleştir
+    # Kaynaktaki isim parçaları (örn: "efe kunc") ana isim grubunun içinde aynen geçiyorsa
     if s_tokens.issubset(t_tokens):
         return 0.95
     if t_tokens.issubset(s_tokens):
         return 0.90
+
+    # Soyisim + en az bir isim kelimesi çakışıyorsa
+    if len(intersection) >= 2:
+        return 0.85
 
     return len(intersection) / float(len(t_tokens.union(s_tokens)))
 
@@ -121,43 +139,41 @@ class QAReportWorker:
         return None
 
     def get_target_worksheet(self, report_wb):
-        """Seçilen dil, ay ve yıla göre hedef sekmeyi bulur."""
         all_worksheets = report_wb.worksheets()
-        target_lang = self.selected_lang.lower().strip()
-        target_month = self.selected_month_str.lower().strip()
+        target_lang = normalize_text(self.selected_lang)
+        target_month = normalize_text(self.selected_month_str)
         target_year = str(self.selected_year).strip()
 
         for ws in all_worksheets:
-            t_lower = ws.title.lower().strip()
+            t_lower = normalize_text(ws.title)
             if target_lang in t_lower and target_month in t_lower and target_year in t_lower:
                 return ws
 
         for ws in all_worksheets:
-            t_lower = ws.title.lower().strip()
+            t_lower = normalize_text(ws.title)
             if target_lang in t_lower and target_month in t_lower:
                 return ws
 
         for ws in all_worksheets:
-            t_lower = ws.title.lower().strip()
+            t_lower = normalize_text(ws.title)
             if target_lang in t_lower:
                 return ws
 
         return report_wb.sheet1
 
     def count_user_reports_in_sheet(self, sheet):
-        """Sekmedeki kullanıcı bazlı rapor sayılarını hesaplar."""
         raw_rows = sheet.get_all_values()
         if not raw_rows or len(raw_rows) <= 1:
             return Counter()
 
-        headers = [str(h).strip().lower() for h in raw_rows[0]]
+        headers = [normalize_text(h) for h in raw_rows[0]]
         data_rows = raw_rows[1:]
 
         date_col_idx = 0
         user_col_idx = -1
 
         for idx, h in enumerate(headers):
-            if any(u in h for u in ["name-surname", "name", "surname", "ad soyad", "kullanıcı", "user", "reporter", "nombre", "apelido", "nick"]):
+            if any(u in h for u in ["name", "surname", "ad soyad", "kullanici", "user", "reporter", "nombre", "apelido", "nick"]):
                 user_col_idx = idx
                 break
         if user_col_idx == -1:
@@ -202,22 +218,20 @@ class QAReportWorker:
         source_worksheets = source_wb.worksheets()
         category_counts = {}
 
-        # 1. POR, ESP ve ENG Sekmelerini Türkçe Ana Tablo Sütunlarına Haritala
+        # 1. TÜM DİLLERDEKİ SEKMELERİ KÜÇÜK HARF DUYARLI TÜRKÇE SÜTUNLARA EŞLEŞTİR
         for ws in source_worksheets:
             ws_title = ws.title.strip()
-            title_lower = ws_title.lower()
+            title_norm = normalize_text(ws_title)
 
-            # 0 Kullanıcı testi pas geçilir
-            if any(term in title_lower for term in ["0 kullanıcı", "0 kul", "new user test", "prueba de usuario nuevo", "teste de novo usuario"]):
+            # 0 Kullanıcı testi içeren sekmeler atlanır
+            if any(term in title_norm for term in ["0 kullanici", "0 kul", "new user test", "prueba de usuario nuevo", "teste de novo usuario"]):
                 self.log(f"🚫 Pas geçildi: [{ws_title}] (0 Kullanıcı Testi işlenmeyecek)")
                 continue
 
-            # Zula Pass / Görev Sekmeleri (POR: Cartão De Missão, ESP: Tarjeta de misión, ENG: Mission Card)
             target_col_name = ""
-            if any(term in title_lower for term in ["cartao de missao", "tarjeta de mision", "mission card", "zula pass", "g.görev", "pass", "gunluk"]):
+            if any(term in title_norm for term in ["cartao de missao", "tarjeta de mision", "mission card", "zula pass", "g gorev", "pass", "gunluk"]):
                 target_col_name = "Zula Pass"
-            # Genel Kontrol Sekmeleri (POR: Verificação Geral, ESP: Revisión General, ENG: General Check / Verification)
-            elif any(term in title_lower for term in ["verificacao geral", "revision general", "relatorio de erros", "general check", "general verification", "genel", "g.kontrol"]):
+            elif any(term in title_norm for term in ["verificacao geral", "revision general", "relatorio de erros", "general check", "general verification", "genel", "g kontrol"]):
                 target_col_name = "Genel"
             else:
                 target_col_name = ws_title
@@ -231,6 +245,7 @@ class QAReportWorker:
 
         self.progress(60)
 
+        # 2. ANA TABLOYU VE KULLANICILARI OKU
         target_rows = target_sheet.get_all_values()
         if not target_rows:
             self.log("⚠️ Ana tabloda veri/başlık bulunamadı!")
@@ -241,14 +256,15 @@ class QAReportWorker:
         
         user_col_in_target = 0
         for idx, h in enumerate(target_headers):
-            if any(k in h.lower() for k in ["kullanıcı", "user", "name", "qa", "ad", "nombre", "apelido"]):
+            h_norm = normalize_text(h)
+            if any(k in h_norm for k in ["kullanici", "user", "name", "qa", "ad", "nombre", "apelido"]):
                 user_col_in_target = idx
                 break
 
         col_index_map = {}
         for cat_name in category_counts.keys():
             for idx, h in enumerate(target_headers):
-                if cat_name.lower() in h.lower():
+                if normalize_text(cat_name) in normalize_text(h):
                     col_index_map[cat_name] = idx
                     break
 
@@ -261,7 +277,7 @@ class QAReportWorker:
 
         cell_updates = []
         
-        # 2. Tüm Kullanıcıları ve Sütunları Eşleştirip Ana Tabloya Yaz
+        # 3. İSİMLERİ (KÜÇÜK HARFLER DAHİL) KARŞILAŞTIRIP TABLOYA İŞLE
         for cat_name, u_counts in category_counts.items():
             if cat_name not in col_index_map:
                 continue
@@ -282,11 +298,12 @@ class QAReportWorker:
 
         self.progress(85)
 
+        # 4. BATCH UPDATE İLE ANA TABLOYA YAZMA
         if cell_updates:
-            self.log(f"Veriler eşleştirildi. Ana tablodaki [{target_sheet.title}] sekmesine aktarılıyor...")
+            self.log(f"İsimler eşleştirildi. Ana tablodaki [{target_sheet.title}] sekmesine yazılıyor...")
             target_sheet.batch_update(cell_updates)
             self.progress(100)
-            self.log(f"✅ İŞLEM BAŞARILI! POR ve ENG sekmelerindeki veriler Türkçe sütunlara eksiksiz yazıldı.")
+            self.log(f"✅ İŞLEM BAŞARILI! Küçük/büyük harfle yazılan tüm isimler başarıyla eşleştirilip tabloya aktarıldı.")
         else:
             self.progress(100)
             self.log(f"⚠️ [{target_sheet.title}] sekmesinde eşleşen veri bulunamadı.")
