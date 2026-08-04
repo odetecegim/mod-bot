@@ -20,7 +20,7 @@ MONTH_MAP = {
 }
 
 def normalize_text(text):
-    """Metinleri küçük harfe çevirir, Türkçe/Özel karakterleri ve fazla boşlukları temizler."""
+    """Metinleri küçük harfe çevirir, Türkçe ve İspanyolca özel karakterleri temizler."""
     if not text:
         return ""
     text = str(text).strip().lower()
@@ -52,15 +52,15 @@ def are_names_matching(target_name, src_name):
     t_tokens = t_norm.split()
     s_tokens = s_norm.split()
     
-    # 1. Kaynak isimdeki tüm kelimeler ana tablodaki ismin içinde geçiyor mu? (Örn: "Efe Künç" -> "Mert Efe Künç")
+    # Kaynak isimdeki kelimeler hedef isimde geçiyor mu?
     if all(tok in t_tokens for tok in s_tokens if len(tok) >= 2):
         return True
         
-    # 2. Ana tablodaki isimdeki kelimeler kaynak ismin içinde geçiyor mu?
+    # Hedef isimdeki kelimeler kaynak isimde geçiyor mu?
     if all(tok in s_tokens for tok in t_tokens if len(tok) >= 2):
         return True
 
-    # 3. Soyisim ve en az bir ilk isim eşleşiyor mu? (Kelime Kesişimi > 1)
+    # Soyisim ve en az bir isim parçası eşleşiyor mu?
     common_tokens = [tok for tok in set(t_tokens).intersection(set(s_tokens)) if len(tok) >= 3]
     if len(common_tokens) >= 2:
         return True
@@ -120,6 +120,7 @@ class QAReportWorker:
         return None
 
     def get_target_worksheet(self, report_wb):
+        """Dile uygun hedef sekmeyi bulur (Örn: ESP TEMMUZ 2026)."""
         all_worksheets = report_wb.worksheets()
         target_lang = self.selected_lang.lower().strip()
         target_month = self.selected_month_str.lower().strip()
@@ -143,6 +144,7 @@ class QAReportWorker:
         return report_wb.sheet1
 
     def count_user_reports_in_sheet(self, sheet):
+        """Kullanıcı rapor sayılarını hesaplar."""
         raw_rows = sheet.get_all_values()
         if not raw_rows or len(raw_rows) <= 1:
             return Counter()
@@ -185,7 +187,7 @@ class QAReportWorker:
         return counts if sum(counts.values()) > 0 else fallback_counts
 
     def process(self):
-        self.log(f"Google Sheets servisine bağlanılıyor... (Dil: {self.selected_lang})")
+        self.log(f"Google Sheets servisine bağlanılıyor... (Seçilen Dil: {self.selected_lang})")
         self.progress(10)
         client = self.connect()
 
@@ -193,37 +195,41 @@ class QAReportWorker:
         report_wb = client.open_by_key(self.report_id)
         
         target_sheet = self.get_target_worksheet(report_wb)
-        self.log(f"Kaynak Tablo: [{source_wb.title}] ➔ Hedef Sekme: [{target_sheet.title}]")
+        self.log(f"Kaynak Tablo: [{source_wb.title}] ➔ Ana Tablo Sekmesi: [{target_sheet.title}]")
         self.progress(25)
 
         source_worksheets = source_wb.worksheets()
         category_counts = {}
 
+        # 1. Kaynak Sekmeleri Türkçe Türkçe Sütun Başlıklarıyla Eşleştir
         for ws in source_worksheets:
             ws_title = ws.title.strip()
             title_lower = ws_title.lower()
 
+            # 0 Kullanıcı Testi Tamamen Atlanır
             if any(term in title_lower for term in ["0 kullanıcı", "0 kul", "new user test", "prueba de usuario nuevo"]):
                 self.log(f"🚫 Pas geçildi: [{ws_title}] (0 Kullanıcı Testi işlenmeyecek)")
                 continue
 
+            # Türkçe Sütun İsimlerine Haritalama
             target_col_name = ""
-            if any(term in title_lower for term in ["tarjeta de misión", "mission card", "pass", "g.görev"]):
+            if any(term in title_lower for term in ["tarjeta de misión", "mission card", "zula pass", "g.görev", "pass"]):
                 target_col_name = "Zula Pass"
             elif any(term in title_lower for term in ["revisión general", "general check", "genel", "g.kontrol"]):
                 target_col_name = "Genel"
             else:
                 target_col_name = ws_title
 
-            self.log(f"📊 Taranıyor: [{ws_title}] ➔ Hedef Sütun: '{target_col_name}'")
+            self.log(f"📊 Kaynak Sekme: [{ws_title}] ➔ Ana Tablo Türkçe Sütun: '{target_col_name}'")
             user_counts = self.count_user_reports_in_sheet(ws)
             category_counts[target_col_name] = user_counts
 
         self.progress(60)
 
+        # 2. Ana Tablodaki Türkçe Başlıkları ve Kullanıcı Sütununu Oku
         target_rows = target_sheet.get_all_values()
         if not target_rows:
-            self.log("⚠️ Hedef sekmede veri/başlık yapısı bulunamadı!")
+            self.log("⚠️ Ana tabloda veri/başlık bulunamadı!")
             self.progress(100)
             return
 
@@ -244,6 +250,7 @@ class QAReportWorker:
 
         cell_updates = []
         
+        # 3. İsim ve Soyisim Bazlı Akıllı Eşleştirme Yapıp Verileri Aktar
         for row_idx, row in enumerate(target_rows[1:], start=2):
             if not row or user_col_in_target >= len(row):
                 continue
@@ -268,11 +275,12 @@ class QAReportWorker:
 
         self.progress(85)
 
+        # 4. Ana Tabloya Güncellemeleri Biçimlendirmeleri Bozmadan Yaz
         if cell_updates:
-            self.log(f"İsimler akıllı olarak eşleştirildi. Puanlar [{target_sheet.title}] sekmesine aktarılıyor...")
+            self.log(f"İsimler eşleştirildi. Veriler Türkçe ana tablodaki [{target_sheet.title}] sekmesine yazılıyor...")
             target_sheet.batch_update(cell_updates)
             self.progress(100)
-            self.log(f"✅ İŞLEM BAŞARILI! 'Efe Künç' veya 'Mert Künç' gibi yazımlar 'Mert Efe Künç' satırına sorunsuzca aktarıldı.")
+            self.log(f"✅ İŞLEM BAŞARILI! Tüm İspanyolca sekmeler Türkçe sütunlara ve doğru kullanıcı isimlerine aktarıldı.")
         else:
             self.progress(100)
             self.log(f"⚠️ [{target_sheet.title}] sekmesinde eşleşen veri bulunamadı.")
