@@ -2,10 +2,17 @@ import os
 import datetime
 import re
 import time
+import json
 import unicodedata
 from collections import Counter
 import gspread
 from google.oauth2.service_account import Credentials
+
+try:
+    import openai
+    HAS_OPENAI = True
+except ImportError:
+    HAS_OPENAI = False
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -15,34 +22,6 @@ SCOPES = [
 MONTH_MAP = {
     "ocak": 1, "subat": 2, "mart": 3, "nisan": 4, "mayis": 5, "haziran": 6,
     "temmuz": 7, "agustos": 8, "eylul": 9, "ekim": 10, "kasim": 11, "aralik": 12
-}
-
-# 🎯 DİLLERE GÖRE KATI SEKME -> SÜTUN HARİTASI
-EXACT_COLUMN_MAP = {
-    "POR": {
-        "cartao de missao": "G. Kartı (Günlük)",
-        "teste de novo usuario": "0 Kul. TESTİ",
-        "verificacao geral": "Genel Check",
-        "relatorio de erros": "Hata bildirimi"
-    },
-    "ESP": {
-        "tarjeta de mision": "G. Kartı (Günlük)",
-        "prueba de nuevo usuario": "0 Kul. TESTİ",
-        "verificacion general": "Genel Check",
-        "informe de errores": "Hata bildirimi"
-    },
-    "ENG": {
-        "mission card": "G. Kartı (Günlük)",
-        "new user test": "0 Kul. TESTİ",
-        "general check": "Genel Check",
-        "error reporting": "Hata bildirimi"
-    },
-    "TR": {
-        "gorev karti": "G. Kartı (Günlük)",
-        "yeni kullanici testi": "0 Kul. TESTİ",
-        "genel kontrol": "Genel Check",
-        "hata bildirimi": "Hata bildirimi"
-    }
 }
 
 def normalize_text(text):
@@ -61,15 +40,16 @@ def normalize_text(text):
     return " ".join(text.split())
 
 def parse_row_date(date_str):
+    """Satırdaki Zaman Damgasından (Örn: 03.07.2026 veya 2026-07-03) Ay ve Yılı Çıkarır"""
     if not date_str:
         return None, None
     try:
         match = re.search(r'(\d{1,4})[\./-](\d{1,2})[\./-](\d{1,4})', str(date_str))
         if match:
             g1, g2, g3 = match.groups()
-            if len(g1) == 4:
+            if len(g1) == 4: # YYYY-MM-DD
                 return int(g2), int(g1)
-            elif len(g3) == 4:
+            elif len(g3) == 4: # DD.MM.YYYY
                 return int(g2), int(g3)
     except Exception:
         pass
@@ -106,8 +86,71 @@ def get_available_spreadsheets(creds_input):
     except Exception as e:
         return {"error": str(e), "all": {}, "source": {}, "report": {}}
 
+# ==========================================
+# 🧠 HARİTALAMA MOTORU
+# ==========================================
+
+def get_sheet_column_mapping(source_titles, target_headers, log_func, api_key=None):
+    final_key = api_key or os.getenv("OPENAI_API_KEY")
+    
+    if HAS_OPENAI and final_key:
+        try:
+            client = openai.OpenAI(api_key=final_key)
+            prompt = f"""
+            Kaynak Sekme Adları: {source_titles}
+            Hedef Tablo Başlıkları: {target_headers}
+
+            GÖREV:
+            - '0 Kullanıcı', 'Teste', 'OLD', 'Kopyası' geçen test sekmelerini eler (null yap).
+            - Sekme isimlerini hedef tablodaki BİREBİR sütun metniyle eşleştir:
+               'Cartão De Missão (günlük)' -> 'G. Kartı (Günlük)'
+               'Verificação Geral (genel)' -> 'Genel Check'
+               'Relatório de erros' -> 'Hata bildirimi'
+
+            SADECE JSON DÖNDÜR: {{ "Sekme Adı": "Hedef Sütun Başlığı Metni" }}
+            """
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+                temperature=0.0
+            )
+            return json.loads(response.choices[0].message.content)
+        except Exception as e:
+            log_func(f"⚠️ AI Analiz Hatası ({str(e)}), kural bazlı haritalama çalıştırılıyor.")
+
+    mapping = {}
+    for st in source_titles:
+        st_norm = normalize_text(st)
+        
+        if any(k in st_norm for k in ["0 kul", "teste de novo", "old", "kopyasi", "copy"]):
+            mapping[st] = None
+            continue
+        
+        matched_header = None
+        for th in target_headers:
+            th_norm = normalize_text(th)
+            
+            if any(k in st_norm for k in ["cartao", "missao", "card", "gunluk"]) and any(k in th_norm for k in ["g karti", "karti", "gunluk"]):
+                matched_header = th
+                break
+            elif any(k in st_norm for k in ["verificacao", "geral", "genel", "check"]) and any(k in th_norm for k in ["genel", "check", "geral"]):
+                matched_header = th
+                break
+            elif any(k in st_norm for k in ["relatorio", "erro", "hata", "bug"]) and any(k in th_norm for k in ["hata", "bildirimi"]):
+                matched_header = th
+                break
+
+        mapping[st] = matched_header
+
+    return mapping
+
+# ==========================================
+# 🚀 QA REPORT WORKER
+# ==========================================
+
 class QAReportWorker:
-    def __init__(self, creds_input, source_id, report_id, selected_lang, selected_year, selected_month, log_callback, progress_callback):
+    def __init__(self, creds_input, source_id, report_id, selected_lang, selected_year, selected_month, log_callback, progress_callback, openai_api_key=None):
         self.creds_input = creds_input
         self.source_id = source_id
         self.report_id = report_id
@@ -117,6 +160,7 @@ class QAReportWorker:
         self.target_month_num = MONTH_MAP.get(normalize_text(selected_month), 7)
         self.log = log_callback
         self.progress = progress_callback
+        self.openai_api_key = openai_api_key
 
     def connect(self):
         if isinstance(self.creds_input, dict):
@@ -126,14 +170,14 @@ class QAReportWorker:
         return gspread.authorize(creds)
 
     def process(self):
-        self.log(f"🧠 İşlem Başlatıldı | Sekme Dili: [{self.selected_lang}] | Dönem: [{self.selected_month_str} {self.selected_year}]")
+        self.log(f"🧠 İşlem Başlatıldı | Dil: [{self.selected_lang}] | Dönem: [{self.selected_month_str} {self.selected_year}]")
         self.progress(10)
         client = self.connect()
 
         source_wb = client.open_by_key(self.source_id)
         report_wb = client.open_by_key(self.report_id)
         
-        # 🎯 1. KESİN HEDEF SEKME ARAMA ("POR TEMMUZ 2026")
+        # 🎯 KESİN SEKME EŞLEŞTİRME: "POR TEMMUZ 2026"
         target_sheet = None
         target_lang = normalize_text(self.selected_lang)
         target_month = normalize_text(self.selected_month_str)
@@ -146,11 +190,11 @@ class QAReportWorker:
                 break
 
         if not target_sheet:
-            self.log(f"❌ HATA: Rapor Tablosunda [{self.selected_lang} {self.selected_month_str} {self.selected_year}] adında sekme bulunamadı!")
+            self.log(f"❌ HATA: Hedef tabloda [{self.selected_lang} {self.selected_month_str} {self.selected_year}] isminde bir sekme bulunamadı!")
             self.progress(100)
             return
 
-        self.log(f"🎯 Hedef Sekme Doğrulandı: [{target_sheet.title}]")
+        self.log(f"🎯 Hedef Sekme Bulundu: [{target_sheet.title}]")
         self.progress(20)
 
         target_rows = target_sheet.get_all_values()
@@ -161,28 +205,19 @@ class QAReportWorker:
 
         target_headers = [str(h).strip() for h in target_rows[0]]
         source_worksheets = source_wb.worksheets()
+        source_titles = [ws.title.strip() for ws in source_worksheets]
 
-        lang_rules = EXACT_COLUMN_MAP.get(self.selected_lang, {})
+        ai_map = get_sheet_column_mapping(source_titles, target_headers, self.log, self.openai_api_key)
+        self.progress(40)
+
         category_counts = {}
 
         for ws in source_worksheets:
             ws_title = ws.title.strip()
-            ws_title_norm = normalize_text(ws_title)
-
-            # Test/Kopya Sekmeleri Filtrele
-            if any(k in ws_title_norm for k in ["0 kul", "old", "kopyasi", "copy"]):
-                self.log(f"🚫 Es geçildi (Test/Kopya Sekme): [{ws_title}]")
-                continue
-
-            # Katı Kural Eşleme
-            mapped_header = None
-            for rule_key, col_header in lang_rules.items():
-                if rule_key in ws_title_norm:
-                    mapped_header = col_header
-                    break
+            mapped_header = ai_map.get(ws_title)
 
             if not mapped_header:
-                self.log(f"🚫 Es geçildi (Eşleşmeyen Sekme): [{ws_title}]")
+                self.log(f"🚫 Es geçildi (Test/Eşleşmeyen): [{ws_title}]")
                 continue
 
             self.log(f"📊 Sekme Okunuyor: [{ws_title}] ➔ Hedef Sütun: '{mapped_header}'")
@@ -197,13 +232,13 @@ class QAReportWorker:
                 if not row:
                     continue
 
-                # 🗓️ TARİH DOĞRULAMA (Sadece Seçilen Ay ve Yıl)
+                # 🗓️ TARİH KONTROLÜ (Sadece Temmuz 2026 satırları alınır)
                 row_date_str = str(row[0]).strip() if len(row) > 0 else ""
                 row_month, row_year = parse_row_date(row_date_str)
 
                 if row_month and row_year:
                     if row_month != self.target_month_num or row_year != self.selected_year:
-                        continue
+                        continue # Seçilen ay ve yıla uymuyorsa atla
 
                 filtered_count += 1
                 name_b = str(row[1]).strip() if len(row) > 1 else ""
@@ -223,7 +258,7 @@ class QAReportWorker:
 
         self.progress(70)
 
-        # HEDEF KULLANICI LİSTESİ ÇIKAR
+        # HEDEF KULLANICI EŞLEŞTİRME
         target_users = []
         for row_idx, row in enumerate(target_rows[1:], start=2):
             if not row:
@@ -264,127 +299,10 @@ class QAReportWorker:
         self.progress(90)
 
         if cell_updates:
-            self.log(f"✍️ Google Sheets [{target_sheet.title}] sekmesine {len(cell_updates)} hücre yazılıyor...")
+            self.log(f"✍️ Veriler Google Sheets [{target_sheet.title}] sekmesine yazılıyor... ({len(cell_updates)} hücre)")
             safe_batch_update(target_sheet, cell_updates, self.log)
             self.progress(100)
-            self.log("✅ İŞLEM BAŞARILI! Veriler eksiksiz güncellendi.")
+            self.log("✅ İŞLEM BAŞARILI! Sadece Temmuz 2026 verileri aktarıldı.")
         else:
             self.progress(100)
-            self.log("⚠️ Seçilen kritere uygun aktarılacak veri bulunamadı.")        if isinstance(self.creds_input, dict):
-            creds = Credentials.from_service_account_info(self.creds_input, scopes=SCOPES)
-        else:
-            creds = Credentials.from_service_account_file(self.creds_input, scopes=SCOPES)
-        return gspread.authorize(creds)
-
-    def parse_date(self, date_val):
-        """Tarih formatlarını (DD.MM.YYYY, YYYY-MM-DD vb.) esnek çözümler."""
-        if not date_val:
-            return None
-        date_str = str(date_val).strip()
-        for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y"):
-            try:
-                return datetime.datetime.strptime(date_str, fmt)
-            except ValueError:
-                continue
-        return None
-
-    def make_signature(self, row_values):
-        """Satırın benzersiz kimliğini (imzasını) oluşturarak mükerrer kaydı engeller."""
-        return "||".join([str(val).strip().lower() for val in row_values if str(val).strip()])
-
-    def process(self):
-        self.log("Google Sheets servisine bağlanılıyor...")
-        self.progress(10)
-        client = self.connect()
-
-        self.log(f"Kaynak Tablo [{self.source_id}] ve Hedef [{self.report_id}] açılıyor...")
-        self.progress(20)
-        
-        source_wb = client.open_by_key(self.source_id)
-        source_sheet = source_wb.sheet1
-
-        report_wb = client.open_by_key(self.report_id)
-        
-        # Seçilen Dil ile aynı isimli bir sekme varsa oraya yazar, yoksa ilk sekmeye yazar
-        try:
-            if self.selected_lang != "Tümü" and self.selected_lang in [s.title for s in report_wb.worksheets()]:
-                report_sheet = report_wb.worksheet(self.selected_lang)
-            else:
-                report_sheet = report_wb.sheet1
-        except Exception:
-            report_sheet = report_wb.sheet1
-
-        self.log(f"Kaynak Dosya: [{source_wb.title}] ➔ Hedef: [{report_wb.title} / Sekme: {report_sheet.title}]")
-        self.progress(35)
-        
-        # Kaynak ve Hedef Tablo Okumaları
-        source_data = source_sheet.get_all_records()
-        existing_report_values = report_sheet.get_all_values()
-
-        # Global Perf Tablosundaki mevcut verilerin imzalarını topla (Mükerrerleri engellemek için)
-        existing_signatures = set()
-        for row in existing_report_values:
-            sig = self.make_signature(row)
-            if sig:
-                existing_signatures.add(sig)
-
-        self.log(f"Global Perf Tablosunda mevcut {len(existing_signatures)} kayıt tarandı.")
-        self.progress(50)
-
-        self.log(f"ESP/Kaynak verileri filtreleniyor... (Yıl={self.selected_year}, Ay={self.selected_month_str})")
-        
-        rows_to_insert = []
-        duplicate_count = 0
-
-        for row in source_data:
-            row_lower = {str(k).lower(): v for k, v in row.items()}
-            row_vals = list(row.values())
-            
-            # Tarih Sütunu Tespiti (ESP: fecha / TR: tarih / POR: data / ENG: date)
-            date_val = None
-            for key in row_lower:
-                if any(t in key for t in ["tarih", "date", "fecha", "data"]):
-                    date_val = row_lower[key]
-                    break
-
-            dt = self.parse_date(date_val)
-            if dt:
-                if dt.year != self.selected_year or dt.month != self.selected_month_num:
-                    continue
-
-            # Dil Sütunu Kontrolü
-            if self.selected_lang != "Tümü":
-                lang_val = ""
-                for key in row_lower:
-                    if any(l in key for l in ["dil", "lang", "idioma"]):
-                        lang_val = str(row_lower[key]).upper()
-                        break
-                
-                # Tabloda dil sütunu bulunuyorsa ve seçilen dille eşleşmiyorsa atla
-                if lang_val and self.selected_lang not in lang_val:
-                    continue
-
-            # MÜKERRER KAYIT KONTROLÜ
-            row_sig = self.make_signature(row_vals)
-            if row_sig in existing_signatures:
-                duplicate_count += 1
-                continue
-
-            rows_to_insert.append(row_vals)
-            existing_signatures.add(row_sig)
-
-        self.progress(75)
-        self.log(f"Süzgeçten geçen: {len(rows_to_insert)} yeni kayıt işlenmeye hazır ({duplicate_count} mükerrer kayıt elendi).")
-
-        # Global Perf Tablosuna Veri Ekleme
-        if rows_to_insert:
-            self.log("Yeni veriler Global Perf Tablosu'na aktarılıyor...")
-            report_sheet.append_rows(rows_to_insert)
-            self.progress(100)
-            self.log(f"✅ İŞLEM BAŞARILI! {len(rows_to_insert)} adet yeni kayıt Global Perf Tablosu'na yazıldı.")
-        else:
-            self.progress(100)
-            if duplicate_count > 0:
-                self.log("⚠️ Aktarılacak tüm veriler zaten Global Perf Tablosu'nda mevcut.")
-            else:
-                self.log("⚠️ Seçilen filtrelere (ESP - Temmuz 2026) uygun kayıt bulunamadı.")
+            self.log("⚠️ Eşleşen kullanıcı/tarih verisi bulunamadı.")
