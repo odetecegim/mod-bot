@@ -15,6 +15,7 @@ MONTH_MAP = {
 def get_available_spreadsheets(creds_input):
     """
     Drive üzerindeki tüm tabloları getirir.
+    Kullanıcı arayüzünde her iki listede de tüm tabloların seçilebilmesini sağlar.
     """
     if isinstance(creds_input, dict):
         creds = Credentials.from_service_account_info(creds_input, scopes=SCOPES)
@@ -25,28 +26,11 @@ def get_available_spreadsheets(creds_input):
     files = client.list_spreadsheet_files()
     
     all_sheets = {f['name']: f['id'] for f in files}
-    
-    report_sheets = {}
-    source_sheets = {}
-
-    report_keywords = ["global perf", "rapor", "report", "relatório", "relatorio"]
-
-    for name, fid in all_sheets.items():
-        name_lower = name.lower()
-        if any(keyword in name_lower for keyword in report_keywords):
-            report_sheets[name] = fid
-        else:
-            source_sheets[name] = fid
-
-    if not report_sheets:
-        report_sheets = all_sheets.copy()
-    if not source_sheets:
-        source_sheets = all_sheets.copy()
 
     return {
         "all": all_sheets,
-        "source": source_sheets,
-        "report": report_sheets
+        "source": all_sheets,
+        "report": all_sheets
     }
 
 class QAReportWorker:
@@ -69,7 +53,7 @@ class QAReportWorker:
         return gspread.authorize(creds)
 
     def parse_date(self, date_val):
-        """Tarih formatlarını çözümleme"""
+        """Çeşitli tarih formatlarını çözümler."""
         if not date_val:
             return None
         date_str = str(date_val).strip()
@@ -81,7 +65,7 @@ class QAReportWorker:
         return None
 
     def make_signature(self, row_values):
-        """Satırın benzersiz kimliğini oluşturur."""
+        """Satırın benzersiz imzası (Mükerrer kontrolü için)"""
         return "||".join([str(val).strip().lower() for val in row_values if str(val).strip()])
 
     def process(self):
@@ -89,16 +73,16 @@ class QAReportWorker:
         self.progress(10)
         client = self.connect()
 
-        self.log(f"Kaynak Tablo [{self.source_id}] ve Hedef [{self.report_id}] açılıyor...")
+        self.log("Seçilen Kaynak ve Hedef Tablolar açılıyor...")
         self.progress(20)
         
-        # Seçimlere göre kaynak ve hedef dosyalarını aç
+        # Seçilen ID'lere göre dosyaları aç
         source_wb = client.open_by_key(self.source_id)
         source_sheet = source_wb.sheet1
 
         report_wb = client.open_by_key(self.report_id)
         
-        # Hedef sekme tespiti
+        # Seçilen dille aynı isimli çalışma sayfası varsa ona yazar, yoksa ilk sekmeye yazar
         try:
             if self.selected_lang != "Tümü" and self.selected_lang in [s.title for s in report_wb.worksheets()]:
                 report_sheet = report_wb.worksheet(self.selected_lang)
@@ -107,36 +91,36 @@ class QAReportWorker:
         except Exception:
             report_sheet = report_wb.sheet1
 
-        self.log(f"Kaynak Dosya: [{source_wb.title}] ➔ Hedef: [{report_wb.title} / Sekme: {report_sheet.title}]")
+        self.log(f"Kaynak: [{source_wb.title}] ➔ Hedef: [{report_wb.title} / Sekme: {report_sheet.title}]")
         self.progress(35)
         
-        # get_all_records() yerine güvenli okuma olan get_all_values() kullanılıyor (Mükerrer/Boş Sütun Başlığı Hatasını Çözer)
+        # Güvenli okuma yöntemi (Header çökme hatasını tamamen engeller)
         raw_source_rows = source_sheet.get_all_values()
-        existing_report_values = report_sheet.get_all_values()
+        existing_report_rows = report_sheet.get_all_values()
 
-        if not raw_source_rows:
-            self.log("⚠️ Kaynak tabloda hiçbir veri bulunamadı.")
+        if not raw_source_rows or len(raw_source_rows) <= 1:
+            self.log("⚠️ Kaynak tabloda işlenecek veri bulunamadı.")
             self.progress(100)
             return
 
         headers = [str(h).strip().lower() for h in raw_source_rows[0]]
         data_rows = raw_source_rows[1:]
 
-        # Tarih sütunu indeksini bul (Tarih / Date / Fecha / Data)
+        # Tarih Sütununu bul (TR: Tarih, ESP: Fecha, ENG: Date, POR: Data vb.)
         date_col_idx = -1
         for idx, h in enumerate(headers):
             if any(t in h for t in ["tarih", "date", "fecha", "data"]):
                 date_col_idx = idx
                 break
 
-        # Hedef tablodaki mevcut verilerin imzalarını topla (Mükerrerleri engellemek için)
+        # Hedef tablodaki mevcut verilerin imzalarını topla (Kopyaları engellemek için)
         existing_signatures = set()
-        for row in existing_report_values:
+        for row in existing_report_rows:
             sig = self.make_signature(row)
             if sig:
                 existing_signatures.add(sig)
 
-        self.log(f"Hedef Tabloda mevcut {len(existing_signatures)} kayıt tarandı.")
+        self.log(f"Hedef Tabloda {len(existing_signatures)} mevcut kayıt tarandı.")
         self.progress(50)
 
         self.log(f"Veriler filtreleniyor... (Yıl={self.selected_year}, Ay={self.selected_month_str})")
@@ -145,11 +129,11 @@ class QAReportWorker:
         duplicate_count = 0
 
         for row_vals in data_rows:
-            # Boş satırları atla
+            # Tamamen boş satırları atla
             if not any(row_vals):
                 continue
 
-            # Tarih Kontrolü
+            # Tarih Filtresi Kontrolü
             if date_col_idx != -1 and date_col_idx < len(row_vals):
                 date_val = row_vals[date_col_idx]
                 dt = self.parse_date(date_val)
@@ -157,7 +141,7 @@ class QAReportWorker:
                     if dt.year != self.selected_year or dt.month != self.selected_month_num:
                         continue
 
-            # MÜKERRER KAYIT KONTROLÜ
+            # MÜKERRER (KOPYA) KONTROLÜ
             row_sig = self.make_signature(row_vals)
             if row_sig in existing_signatures:
                 duplicate_count += 1
@@ -167,17 +151,17 @@ class QAReportWorker:
             existing_signatures.add(row_sig)
 
         self.progress(75)
-        self.log(f"Aktarıma hazır: {len(rows_to_insert)} yeni kayıt ({duplicate_count} mükerrer kayıt elendi).")
+        self.log(f"Aktarıma hazır: {len(rows_to_insert)} yeni kayıt ({duplicate_count} mükerrer kayıt atlandı).")
 
-        # Hedef Tabloya Yazma
+        # Hedef Tabloya Ekleme
         if rows_to_insert:
-            self.log("Veriler hedef tabloya aktarılıyor...")
+            self.log("Veriler hedef tabloya yazılıyor...")
             report_sheet.append_rows(rows_to_insert)
             self.progress(100)
-            self.log(f"✅ İŞLEM BAŞARILI! {len(rows_to_insert)} adet yeni kayıt hedef tabloya yazıldı.")
+            self.log(f"✅ İŞLEM BAŞARILI! {len(rows_to_insert)} adet yeni kayıt hedef tabloya aktarıldı.")
         else:
             self.progress(100)
             if duplicate_count > 0:
-                self.log("⚠️ Aktarılacak veriler zaten hedef tabloda mevcut.")
+                self.log("⚠️ Aktarılacak veriler zaten hedef tabloda mevcut olduğu için tekrar eklenmedi.")
             else:
                 self.log("⚠️ Seçilen filtrelere uygun yeni kayıt bulunamadı.")
