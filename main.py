@@ -1,68 +1,42 @@
-from flask import Flask, jsonify, request
-from backend import get_available_spreadsheets, QAReportWorker
+# --- GOOGLE CREDENTIALS YÖNETİMİ ---
+@st.cache_resource
+def get_credentials():
+    # 1. GCP_SERVICE_ACCOUNT Secrets Kontrolü (TOML Objesi veya String)
+    if "GCP_SERVICE_ACCOUNT" in st.secrets:
+        try:
+            sec = st.secrets["GCP_SERVICE_ACCOUNT"]
+            
+            # Eğer Streamlit bunu zaten bir dictionary/AttrDict olarak okuduysa:
+            if isinstance(sec, (dict, st.runtime.secrets.AttrDict)):
+                creds = dict(sec)
+            # Eğer düz string olarak okuduysa:
+            elif isinstance(sec, str):
+                try:
+                    decoded = base64.b64decode(sec).decode('utf-8')
+                    creds = json.loads(decoded)
+                except Exception:
+                    creds = json.loads(sec)
+            else:
+                creds = dict(sec)
 
-app = Flask(__name__)
+            # Private Key format düzeltmesi (Ters slashları alt satıra çevir)
+            if "private_key" in creds:
+                creds["private_key"] = creds["private_key"].replace("\\n", "\n")
+                
+            return creds
+        except Exception as e:
+            st.error(f"Secrets okuma hatası: {e}")
+            return None
 
-# Service account JSON dosyanızın yolu veya dict verisi
-CREDS_PATH = "service_account.json"
+    # 2. GOOGLE_CREDENTIALS Secrets Kontrolü (Eski format)
+    elif "GOOGLE_CREDENTIALS" in st.secrets:
+        creds = dict(st.secrets["GOOGLE_CREDENTIALS"])
+        if "private_key" in creds:
+            creds["private_key"] = creds["private_key"].replace("\\n", "\n")
+        return creds
 
-@app.route("/api/spreadsheets", methods=["GET"])
-def fetch_spreadsheets():
-    """
-    Google Drive'da bağlı olan tüm Google Sheets dosyalarını çekip
-    Frontend'deki Kaynak ve Rapor dropdown'larına gönderir.
-    """
-    try_sheets = get_available_spreadsheets(CREDS_PATH)
-    # try_sheets = {"all": {"Tablo Adı 1": "ID_1", "Tablo Adı 2": "ID_2"}}
-    
-    # Frontend'in rahat okuyabilmesi için liste formatına çeviriyoruz:
-    sheets_list = [
-        {"name": name, "id": sheet_id} 
-        for name, sheet_id in try_sheets["all"].items()
-    ]
-    
-    return jsonify({"success": True, "spreadsheets": sheets_list})
-
-@app.route("/api/run-report", methods=["POST"])
-def run_report():
-    """
-    Paneldan seçilen Kaynak Tablo ID, Rapor Tablosu ID, Dil, Ay ve Yıl
-    bilgilerini alıp rapor güncelleme işlemini başlatır.
-    """
-    data = request.json
-    
-    source_id = data.get("source_id")   # Seçilen Kaynak Tablo ID'si
-    report_id = data.get("report_id")   # Seçilen Rapor Tablosu ID'si
-    lang = data.get("lang")             # Seçilen Dil (örn: TR, EN, Tümü)
-    month = data.get("month")           # Seçilen Ay (örn: Temmuz)
-    year = data.get("year")             # Seçilen Yıl (örn: 2026)
-
-    logs = []
-    
-    def log_callback(msg):
-        logs.append(msg)
-        print(f"[LOG]: {msg}")
-
-    def progress_callback(percentage):
-        print(f"[PROGRESS]: %{percentage}")
-
-    # Rapor işleyiciyi çalıştır
-    worker = QAReportWorker(
-        creds_input=CREDS_PATH,
-        source_id=source_id,
-        report_id=report_id,
-        selected_lang=lang,
-        selected_year=year,
-        selected_month=month,
-        log_callback=log_callback,
-        progress_callback=progress_callback
-    )
-    
-    try:
-        worker.process()
-        return jsonify({"success": True, "logs": logs})
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e), "logs": logs}), 500
-
-if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    # 3. Yerel Dosya Kontrolü
+    elif os.path.exists("credentials.json"):
+        return "credentials.json"
+    else:
+        return None
