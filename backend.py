@@ -1,4 +1,7 @@
 import datetime
+import re
+import unicodedata
+from collections import Counter
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -7,21 +10,83 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive"
 ]
 
-# Ay isimlerinin sayısal karşılıkları
 MONTH_MAP = {
     "ocak": 1, "şubat": 2, "mart": 3, "nisan": 4, "mayıs": 5, "haziran": 6,
-    "temmuz": 7, "ağustos": 8, "eylül": 9, "ekim": 10, "kasım": 11, "aralık": 12
+    "temmuz": 7, "ağustos": 8, "eylül": 9, "ekim": 10, "kasım": 11, "aralık": 12,
+    "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
+    "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12,
+    "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
+    "julio": 7, "agosto": 8, "septiembre": 9, "octubre": 10, "noviembre": 11, "diciembre": 12
 }
 
-def get_available_spreadsheets(json_path):
-    creds = Credentials.from_service_account_file(json_path, scopes=SCOPES)
+def normalize_text(text):
+    """Metinleri küçük harfe çevirir, Türkçe/Özel karakterleri ve fazla boşlukları temizler."""
+    if not text:
+        return ""
+    text = str(text).strip().lower()
+    # Türkçe özel harf dönüşümleri
+    replacements = {
+        'ı': 'i', 'İ': 'i', 'ğ': 'g', 'Ğ': 'g', 'ü': 'u', 'Ü': 'u',
+        'ş': 's', 'Ş': 's', 'ö': 'o', 'Ö': 'o', 'ç': 'c', 'Ç': 'c',
+        'ñ': 'n', 'á': 'a', 'é': 'e', 'í': 'i', 'ó': 'o', 'ú': 'u'
+    }
+    for k, v in replacements.items():
+        text = text.replace(k, v)
+    text = unicodedata.normalize('NFKD', text).encode('ASCII', 'ignore').decode('utf-8')
+    # Sadece harf ve rakamları tut
+    text = re.sub(r'[^a-z0-9\s]', '', text)
+    return re.sub(r'\s+', ' ', text).strip()
+
+def are_names_matching(name1, name2):
+    """
+    Tek isim / çift isim ve küçük-büyük harf uyumsuzluklarını akıllıca karşılaştırır.
+    Örn: "Ahmet Can" <-> "ahmet", "Mehmet Ali" <-> "mehmet ali"
+    """
+    n1 = normalize_text(name1)
+    n2 = normalize_text(name2)
+    
+    if not n1 or not n2:
+        return False
+    
+    # Tam eşitlik
+    if n1 == n2:
+        return True
+    
+    # Kelimelere ayır (Kelime bazlı kontrol)
+    tokens1 = set(n1.split())
+    tokens2 = set(n2.split())
+    
+    # Kelime kümesi alt kümesi mi? (Örn: 'ahmet' kelimesi {'ahmet', 'can'} kümesinde var mı?)
+    if tokens1.issubset(tokens2) or tokens2.issubset(tokens1):
+        return True
+        
+    # Herhangi bir ortak isim 3 harften uzunsa ve eşleşiyorsa
+    common_tokens = tokens1.intersection(tokens2)
+    for token in common_tokens:
+        if len(token) >= 3:
+            return True
+            
+    return False
+
+def get_available_spreadsheets(creds_input):
+    if isinstance(creds_input, dict):
+        creds = Credentials.from_service_account_info(creds_input, scopes=SCOPES)
+    else:
+        creds = Credentials.from_service_account_file(creds_input, scopes=SCOPES)
+    
     client = gspread.authorize(creds)
     files = client.list_spreadsheet_files()
-    return {f['name']: f['id'] for f in files}
+    all_sheets = {f['name']: f['id'] for f in files}
+
+    return {
+        "all": all_sheets,
+        "source": all_sheets,
+        "report": all_sheets
+    }
 
 class QAReportWorker:
-    def __init__(self, json_path, source_id, report_id, selected_lang, selected_year, selected_month, log_callback, progress_callback):
-        self.json_path = json_path
+    def __init__(self, creds_input, source_id, report_id, selected_lang, selected_year, selected_month, log_callback, progress_callback):
+        self.creds_input = creds_input
         self.source_id = source_id
         self.report_id = report_id
         self.selected_lang = selected_lang
@@ -32,174 +97,192 @@ class QAReportWorker:
         self.progress = progress_callback
 
     def connect(self):
-        creds = Credentials.from_service_account_file(self.json_path, scopes=SCOPES)
+        if isinstance(self.creds_input, dict):
+            creds = Credentials.from_service_account_info(self.creds_input, scopes=SCOPES)
+        else:
+            creds = Credentials.from_service_account_file(self.creds_input, scopes=SCOPES)
         return gspread.authorize(creds)
 
-    def get_target_sheet_name(self, lang, spreadsheet):
-        expected_title = f"{lang} {self.selected_month_str} {self.selected_year}"
-        worksheets = [ws.title for ws in spreadsheet.worksheets()]
+    def parse_date(self, date_val):
+        if not date_val:
+            return None
+        date_str = str(date_val).strip()
+        clean_date = re.split(r'\s+', date_str)[0]
         
-        if expected_title in worksheets:
-            return expected_title
-
-        for ws_title in worksheets:
-            if lang in ws_title and self.selected_month_str in ws_title and str(self.selected_year) in ws_title:
-                return ws_title
-            
-        for ws_title in worksheets:
-            if "error reporting" in ws_title.lower() and lang.lower() in ws_title.lower():
-                return ws_title
-            
-        raise ValueError(f"'{lang}' için belirtilen döneme ait rapor sayfası bulunamadı! Aranan: '{expected_title}'")
-
-    def is_in_selected_period(self, timestamp_val):
-        """Zaman damgasının seçilen Ay ve Yıl içerisinde olup olmadığını kontrol eder."""
-        if not timestamp_val:
-            return True
-
-        ts_str = str(timestamp_val).strip()
-
-        for fmt in [
-            "%d.%m.%Y %H:%M:%S", "%d/%m/%Y %H:%M:%S", "%Y-%m-%d %H:%M:%S",
-            "%d.%m.%Y", "%d/%m/%Y", "%Y-%m-%d"
-        ]:
+        formats = (
+            "%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y",
+            "%d.%m.%y", "%d/%m/%y", "%Y/%m/%d"
+        )
+        for fmt in formats:
             try:
-                dt = datetime.datetime.strptime(ts_str.split('.')[0] if '.' in ts_str and len(ts_str.split('.')[-1]) > 4 else ts_str, fmt)
-                return dt.year == self.selected_year and dt.month == self.selected_month_num
+                return datetime.datetime.strptime(clean_date, fmt)
             except ValueError:
                 continue
+        return None
 
-        if str(self.selected_year) in ts_str:
-            month_zero_padded = f"{self.selected_month_num:02d}"
-            if f"/{month_zero_padded}/" in ts_str or f".{month_zero_padded}." in ts_str or f"-{month_zero_padded}-" in ts_str:
-                return True
+    def get_target_worksheet(self, report_wb):
+        """Dile uygun hedef sekemeyi otomatik bulur."""
+        all_worksheets = report_wb.worksheets()
+        target_lang = self.selected_lang.lower().strip()
+        target_month = self.selected_month_str.lower().strip()
+        target_year = str(self.selected_year).strip()
 
-        return False
+        for ws in all_worksheets:
+            t_lower = ws.title.lower().strip()
+            if target_lang in t_lower and target_month in t_lower and target_year in t_lower:
+                return ws
 
-    def count_tasks_by_user(self, worksheet):
-        """Kaynak sayfadan SADECE SEÇİLEN AY VE YILDAKİ görev sayılarını toplar."""
-        records = worksheet.get_all_records()
-        user_counts = {}
+        for ws in all_worksheets:
+            t_lower = ws.title.lower().strip()
+            if target_lang in t_lower and target_month in t_lower:
+                return ws
 
-        for row in records:
-            timestamp = None
-            for key, val in row.items():
-                if "zaman" in str(key).lower() or "timestamp" in str(key).lower() or "tarih" in str(key).lower():
-                    timestamp = val
-                    break
+        for ws in all_worksheets:
+            t_lower = ws.title.lower().strip()
+            if target_lang in t_lower:
+                return ws
 
-            if timestamp and not self.is_in_selected_period(timestamp):
+        return report_wb.sheet1
+
+    def count_user_reports_in_sheet(self, sheet):
+        """Kullanıcı rapor sayılarını toplar."""
+        raw_rows = sheet.get_all_values()
+        if not raw_rows or len(raw_rows) <= 1:
+            return Counter()
+
+        headers = [str(h).strip().lower() for h in raw_rows[0]]
+        data_rows = raw_rows[1:]
+
+        date_col_idx = 0
+        user_col_idx = -1
+
+        for idx, h in enumerate(headers):
+            if any(u in h for u in ["name-surname", "name", "surname", "ad soyad", "kullanıcı", "user", "reporter", "nombre"]):
+                user_col_idx = idx
+                break
+        if user_col_idx == -1:
+            user_col_idx = 1
+
+        counts = Counter()
+        fallback_counts = Counter()
+
+        for row_vals in data_rows:
+            if not any(row_vals):
                 continue
+            
+            user_name = "Bilinmeyen Kullanıcı"
+            if user_col_idx < len(row_vals):
+                val = str(row_vals[user_col_idx]).strip()
+                if val:
+                    user_name = val
 
-            user = None
-            for key, val in row.items():
-                clean_key = str(key).strip().lower()
-                if any(attr in clean_key for attr in ["in-game character name", "nick", "name-surname", "ad soyad", "oyuncu", "player", "qa"]):
-                    user = val
-                    if user:
-                        break
+            if date_col_idx < len(row_vals):
+                date_val = row_vals[date_col_idx]
+                dt = self.parse_date(date_val)
+                if dt:
+                    if dt.year == self.selected_year and dt.month == self.selected_month_num:
+                        counts[user_name] += 1
+                    elif dt.month == self.selected_month_num:
+                        fallback_counts[user_name] += 1
 
-            if user:
-                user_str = str(user).strip().lower()
-                if user_str:
-                    user_counts[user_str] = user_counts.get(user_str, 0) + 1
-
-        return user_counts
+        return counts if sum(counts.values()) > 0 else fallback_counts
 
     def process(self):
-        self.log("Google Sheets API'ye bağlanılıyor...")
-        client = self.connect()
+        self.log(f"Google Sheets servisine bağlanılıyor... (Dil: {self.selected_lang})")
         self.progress(10)
+        client = self.connect()
 
-        self.log("Spreadsheet'ler açılıyor...")
-        src_spreadsheet = client.open_by_key(self.source_id)
-        rep_spreadsheet = client.open_by_key(self.report_id)
-        self.progress(20)
-
-        self.log(f"Kaynak veriler filtrelenerek okunuyor ({self.selected_month_str} {self.selected_year})...")
+        source_wb = client.open_by_key(self.source_id)
+        report_wb = client.open_by_key(self.report_id)
         
-        mission_counts = {}
-        general_counts = {}
+        target_sheet = self.get_target_worksheet(report_wb)
+        self.log(f"Kaynak Tablo: [{source_wb.title}] ➔ Hedef Sekme: [{target_sheet.title}]")
+        self.progress(25)
 
-        for ws in src_spreadsheet.worksheets():
-            title = ws.title.strip().lower()
-            
-            # Mission Card (Pass) tablosu tespiti
-            if "mission card" in title or "pass" in title:
-                mission_counts = self.count_tasks_by_user(ws)
-                self.log(f"-> Mission Card(Pass): {self.selected_month_str} {self.selected_year} dönemi {len(mission_counts)} aktif oyuncu okundu.")
-            
-            # General Check (Genel) tablosu tespiti
-            elif "general check" in title or "genel" in title:
-                general_counts = self.count_tasks_by_user(ws)
-                self.log(f"-> General Check (Genel): {self.selected_month_str} {self.selected_year} dönemi {len(general_counts)} aktif oyuncu okundu.")
+        # 1. Kaynak Tablo Sekmelerini İşle
+        source_worksheets = source_wb.worksheets()
+        category_counts = {}
 
-        # Note: New User Test pas geçilmiştir (Manuel kontrol edilmektedir).
-        self.log("ℹ️ New User Test kategorisi atlandı (Manuel kontrol edilecek).")
+        for ws in source_worksheets:
+            ws_title = ws.title.strip()
+            title_lower = ws_title.lower()
 
-        self.progress(40)
-
-        languages = ["ENG", "ESP", "POR", "TR"] if self.selected_lang == "Tümü" else [self.selected_lang]
-        total_langs = len(languages)
-
-        for idx, lang in enumerate(languages):
-            self.log(f"[{lang}] Rapor sayfası aranıyor ({self.selected_month_str} {self.selected_year})...")
-            
-            try:
-                target_sheet_name = self.get_target_sheet_name(lang, rep_spreadsheet)
-            except ValueError as e:
-                self.log(f"⚠️ [{lang}] Sayfa bulunamadı: {e}")
+            # 0 Kullanıcı Testi Tamamen Atlanır
+            if any(term in title_lower for term in ["0 kullanıcı", "0 kul", "new user test", "prueba de usuario nuevo"]):
+                self.log(f"🚫 Pas geçildi: [{ws_title}] (0 Kullanıcı Testi işlenmeyecek)")
                 continue
 
-            target_ws = rep_spreadsheet.worksheet(target_sheet_name)
-            self.log(f"[{lang}] Bulunan sayfa: '{target_sheet_name}'")
-
-            all_rows = target_ws.get_all_values()
-            updates = []
-            matched_players = 0
-            
-            for row_idx, row in enumerate(all_rows, start=1):
-                if not row:
-                    continue
-                
-                col_a = row[0].strip().lower() if len(row) > 0 else ""
-                col_b = row[1].strip().lower() if len(row) > 1 else ""
-                
-                player_name = None
-                if col_a in mission_counts or col_a in general_counts:
-                    player_name = col_a
-                elif col_b in mission_counts or col_b in general_counts:
-                    player_name = col_b
-
-                if not player_name:
-                    continue
-
-                matched = False
-
-                # D Sütunu: Mission Card(Pass) - Sadece sayısı > 0 ise güncelle
-                if player_name in mission_counts and mission_counts[player_name] > 0:
-                    updates.append({'range': f'D{row_idx}', 'values': [[mission_counts[player_name]]]})
-                    matched = True
-
-                # E Sütunu (New User Test): Manuel kontrol edildiği için pas geçildi.
-
-                # F Sütunu: General Check (Genel) - Sadece sayısı > 0 ise güncelle
-                if player_name in general_counts and general_counts[player_name] > 0:
-                    updates.append({'range': f'F{row_idx}', 'values': [[general_counts[player_name]]]})
-                    matched = True
-
-                if matched:
-                    matched_players += 1
-
-            if updates:
-                self.log(f"[{lang}] {matched_players} aktif oyuncu doğrulandı, {len(updates)} hücre güncelleniyor...")
-                target_ws.batch_update(updates)
-                self.log(f"[{lang}] Başarıyla güncellendi!")
+            # Hedef Sütun Eşleştirmesi
+            target_col_name = ""
+            if any(term in title_lower for term in ["tarjeta de misión", "mission card", "pass", "g.görev"]):
+                target_col_name = "Zula Pass"
+            elif any(term in title_lower for term in ["revisión general", "general check", "genel", "g.kontrol"]):
+                target_col_name = "Genel"
             else:
-                self.log(f"ℹ️ [{lang}] Güncellenecek yeni veri bulunamadı.")
+                target_col_name = ws_title
 
-            current_progress = 40 + int(((idx + 1) / total_langs) * 55)
-            self.progress(current_progress)
+            self.log(f"📊 Taranıyor: [{ws_title}] ➔ Hedef Sütun: '{target_col_name}'")
+            user_counts = self.count_user_reports_in_sheet(ws)
+            category_counts[target_col_name] = user_counts
 
-        self.progress(100)
-        self.log("İşlem tamamlandı.")S
+        self.progress(60)
+
+        # 2. Ana Tablo Yapısını Oku
+        target_rows = target_sheet.get_all_values()
+        if not target_rows:
+            self.log("⚠️ Hedef sekmede veri/başlık yapısı bulunamadı!")
+            self.progress(100)
+            return
+
+        target_headers = [str(h).strip() for h in target_rows[0]]
+        
+        user_col_in_target = 0
+        for idx, h in enumerate(target_headers):
+            if any(k in h.lower() for k in ["kullanıcı", "user", "name", "qa", "ad", "nombre"]):
+                user_col_in_target = idx
+                break
+
+        col_index_map = {}
+        for cat_name in category_counts.keys():
+            for idx, h in enumerate(target_headers):
+                if cat_name.lower() in h.lower():
+                    col_index_map[cat_name] = idx
+                    break
+
+        cell_updates = []
+        
+        # 3. Satır Bazlı İsim Eşleştirme ve Puan Yazma
+        for row_idx, row in enumerate(target_rows[1:], start=2):
+            if not row or user_col_in_target >= len(row):
+                continue
+            
+            target_user_name = str(row[user_col_in_target]).strip()
+            if not target_user_name:
+                continue
+
+            for cat_name, u_counts in category_counts.items():
+                if cat_name in col_index_map:
+                    target_c_idx = col_index_map[cat_name]
+                    
+                    matched_count = 0
+                    # Esnek İsim Karşılaştırması Yapılır
+                    for src_user_name, count in u_counts.items():
+                        if are_names_matching(target_user_name, src_user_name):
+                            matched_count += count  # Çift kayıt varsa puanları toplar
+                    
+                    cell_updates.append({
+                        'range': gspread.utils.rowcol_to_a1(row_idx, target_c_idx + 1),
+                        'values': [[matched_count if matched_count > 0 else ""]]
+                    })
+
+        self.progress(85)
+
+        # 4. Güncellemeleri Biçimlendirmeleri KORUYARAK Yaz
+        if cell_updates:
+            self.log(f"İsimler eşleştirildi. Puanlar [{target_sheet.title}] sekmesine yazılıyor...")
+            target_sheet.batch_update(cell_updates)
+            self.progress(100)
+            self.log(f"✅ İŞLEM BAŞARILI! Tek/çift isimli ve küçük harfle yazılan kullanıcı puanları doğru şekilde aktarıldı.")
+        else:
+            self.progress(100)
+            self.log(f"⚠️ [{target_sheet.title}] sekmesinde eşleşen veri bulunamadı.")
