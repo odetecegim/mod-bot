@@ -36,7 +36,7 @@ def normalize_text_strict(text):
 
 _MONTH_MAP_RAW = {
     "ocak": 1, "şubat": 2, "mart": 3, "nisan": 4, "mayıs": 5, "haziran": 6,
-    "temmuz": 7, "ağustos": 8, "eylül": 9, "ekim": 10, "kasım": 11, "aralık": 12,
+    "temmuz": 7, "ağustos": 8, "eylül": 9, "kasım": 11, "aralık": 12,
     "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
     "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12,
     "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
@@ -55,14 +55,12 @@ def calculate_name_similarity(target_name, src_name):
     s_strict = normalize_text_strict(src_name)
     if not t_strict or not s_strict:
         return 0.0
-    # Birebir tam isim eşleşmesi
     if t_strict == s_strict:
         return 1.0
     t_norm = normalize_text(target_name)
     s_norm = normalize_text(src_name)
     t_tokens = set(t_norm.split())
     s_tokens = set(s_norm.split())
-    # Sadece tüm isim kelimeleri uyuşursa 0.90 döndür
     if t_tokens and t_tokens == s_tokens:
         return 0.90
     return 0.0
@@ -104,7 +102,6 @@ def get_available_spreadsheets(creds_input):
 
 class BaseLanguageHandler:
     def is_ignored_sheet(self, norm_title):
-        # Kopya, yedek, test ve eski sekmeleri tamamen engelle
         ignore_keywords = ["0kullanici", "0kul", "test", "old", "kopya", "copy", "bak", "yedek", "draft"]
         return any(k in norm_title for k in ignore_keywords)
 
@@ -243,6 +240,10 @@ class QAReportWorker:
                 if user_col_idx == -1:
                     user_col_idx = idx
 
+        # Eğer sekmede Tarih Sütunu YOKSA, eski/geçersiz sekmedir -> Tamamen PAS GEÇ
+        if date_col_idx == -1:
+            return Counter()
+
         if user_col_idx == -1:
             user_col_idx = 1 if len(headers) > 1 else 0
 
@@ -252,29 +253,31 @@ class QAReportWorker:
             if not any(row_vals):
                 continue
 
+            # 📌 1. KATI TARİH KONTROLÜ
+            if date_col_idx >= len(row_vals):
+                continue
+
+            date_val = row_vals[date_col_idx]
+            dt = self.handler.parse_date(date_val)
+            
+            # Tarih okunamıyorsa veya seçilen Ay/Yıl ile EŞLEŞMİYORSA kesinlikle atla!
+            if not dt or dt.year != self.selected_year or dt.month != self.selected_month_num:
+                continue
+
+            # 📌 2. KULLANICI ADI KONTROLÜ
             user_name = ""
             if user_col_idx < len(row_vals):
                 val = str(row_vals[user_col_idx]).strip()
                 if val and not any(tot in val.lower() for tot in ["toplam", "total", "sum"]):
                     user_name = val
 
-            if not user_name:
-                continue
-
-            # 📅 Sadece Seçilen Ay ve Yıla Ait Olanları Say
-            if date_col_idx != -1 and date_col_idx < len(row_vals):
-                date_val = row_vals[date_col_idx]
-                dt = self.handler.parse_date(date_val)
-                if dt and dt.year == self.selected_year and dt.month == self.selected_month_num:
-                    counts[user_name] += 1
-            # Eğer sekmede tarih sütunu yoksa satırı direkt geç
-            elif date_col_idx == -1:
+            if user_name:
                 counts[user_name] += 1
 
         return counts
 
     def process(self):
-        self.log(f"İşlem Modülü: [{self.handler.__class__.__name__}] | Dil: [{self.selected_lang}] | Filtrelenen Dönem: [{self.selected_month_str} {self.selected_year}]")
+        self.log(f"İşlem Modülü: [{self.handler.__class__.__name__}] | Dil: [{self.selected_lang}] | Filtre: [{self.selected_month_str} {self.selected_year}]")
         self.progress(10)
         client = self.connect()
 
@@ -289,14 +292,22 @@ class QAReportWorker:
         category_counts = {}
 
         for ws in source_worksheets:
+            # 🔒 1. Gizli Sekme Filtresi (Hidden ise atla)
+            try:
+                if ws.is_hidden():
+                    self.log(f"🙈 Gizli Sekme Pas Geçildi: [{ws.title}]")
+                    continue
+            except Exception:
+                pass
+
             ws_title = ws.title.strip()
             target_col_name = self.handler.map_category(ws_title)
 
             if not target_col_name:
-                self.log(f"🚫 Pas geçildi (Eski/Kopya/Engelli Sekme): [{ws_title}]")
+                self.log(f"🚫 Pas geçildi (Kategori Dışı Sekme): [{ws_title}]")
                 continue
 
-            self.log(f"📊 Sekme Okunuyor: [{ws_title}] ➔ Hedef Kategori: '{target_col_name}'")
+            self.log(f"📊 Aktif Sekme Taranıyor: [{ws_title}] ➔ Hedef Sütun: '{target_col_name}'")
             user_counts = self.count_user_reports_in_sheet(ws)
             
             if target_col_name not in category_counts:
@@ -369,7 +380,7 @@ class QAReportWorker:
             self.log(f"Veriler [{target_sheet.title}] sekmesine yazılıyor... ({len(cell_updates)} hücre)")
             safe_batch_update(target_sheet, cell_updates, self.log)
             self.progress(100)
-            self.log(f"✅ İŞLEM BAŞARILI! Gerçek sayılar D ve F sütunlarına aktarıldı.")
+            self.log(f"✅ İŞLEM BAŞARILI! Sadece seçilen ayki ({self.selected_month_str} {self.selected_year}) gerçek rapor sayıları yazıldı.")
         else:
             self.progress(100)
             self.log(f"⚠️ Seçilen döneme ({self.selected_month_str} {self.selected_year}) ait aktarılacak veri bulunamadı.")
