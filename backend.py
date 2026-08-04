@@ -13,7 +13,7 @@ SCOPES = [
 ]
 
 # ==========================================
-# 🧹 YARDIMCI FONKSİYONLAR
+# 🧹 METİN TEMİZLEME VE TARİH FONKSİYONLARI
 # ==========================================
 
 def normalize_text(text):
@@ -97,12 +97,12 @@ def get_available_spreadsheets(creds_input):
         return {"error": str(e), "all": {}, "source": {}, "report": {}}
 
 # ==========================================
-# 🌐 DİL BAZLI ÖZEL SÜRÜCÜLER (HANDLERS)
+# 🌐 DİL BAĞIMSIZ HASSAS HARİTALAMA (HANDLER)
 # ==========================================
 
-class BaseLanguageHandler:
+class UniversalLanguageHandler:
     def is_test_sheet(self, norm_title):
-        return any(k in norm_title for k in ["0kullanici", "testedenovo", "pruebadeusuario", "0kul", "test"])
+        return any(k in norm_title for k in ["0kullanici", "0kul", "testedenovo", "pruebadeusuario", "test"])
 
     def parse_date(self, date_val):
         if not date_val:
@@ -115,68 +115,32 @@ class BaseLanguageHandler:
                 continue
         return None
 
-class PORLanguageHandler(BaseLanguageHandler):
     def map_category(self, ws_title):
         norm = normalize_text_strict(ws_title)
+        
+        # Test Sekmelerini pas geç
         if self.is_test_sheet(norm):
             return None
-        if any(k in norm for k in ["cartaodemissao", "missao", "diaria", "pass"]):
-            return "Zula Pass" # Tablodaki Türkçe başlığa direkt eşle
-        elif any(k in norm for k in ["verificacaogeral", "relatoriodeerros", "geral", "check"]):
-            return "Genel"
-        return re.sub(r'\(.*?\)', '', ws_title).strip()
 
-class TRLanguageHandler(BaseLanguageHandler):
-    def map_category(self, ws_title):
-        norm = normalize_text_strict(ws_title)
-        if self.is_test_sheet(norm):
-            return None
-        if any(k in norm for k in ["zulapass", "gunluk", "gkarti", "mission"]):
-            return "Zula Pass"
-        elif any(k in norm for k in ["genelcheck", "genel"]):
-            return "Genel"
-        return re.sub(r'\(.*?\)', '', ws_title).strip()
+        # 1. Görev Kartı / Zula Pass / Mission Card Grubu -> 'ZULA_PASS_KEY'
+        if any(k in norm for k in ["missioncard", "mission", "zulapass", "gkarti", "gunluk", "cartaodemissao", "tarjetademision"]):
+            return "ZULA_PASS_KEY"
 
-class ESPLanguageHandler(BaseLanguageHandler):
-    def map_category(self, ws_title):
-        norm = normalize_text_strict(ws_title)
-        if self.is_test_sheet(norm):
-            return None
-        if any(k in norm for k in ["tarjetademision", "mision", "tarjeta", "pass"]):
-            return "Zula Pass"
-        elif any(k in norm for k in ["revisiongeneral", "general", "revision"]):
-            return "Genel"
-        return re.sub(r'\(.*?\)', '', ws_title).strip()
+        # 2. Genel Check Grubu -> 'GENEL_CHECK_KEY'
+        if any(k in norm for k in ["generalcheck", "general", "genelcheck", "genel", "verificacaogeral", "revisiongeneral"]):
+            return "GENEL_CHECK_KEY"
 
-class ENGLanguageHandler(BaseLanguageHandler):
-    def map_category(self, ws_title):
-        norm = normalize_text_strict(ws_title)
-        if self.is_test_sheet(norm):
-            return None
-        # Mission Card sekmesini tablodaki "Zula Pass" sütununa bağla
-        if any(k in norm for k in ["missioncard", "mission", "card", "pass"]):
-            return "Zula Pass"
-        # General Check sekmesini tablodaki "Genel" sütununa bağla
-        elif any(k in norm for k in ["generalcheck", "general", "check"]):
-            return "Genel"
-        # Error Reporting sekmesini tablodaki ilgili hata sütununa bağla
-        elif any(k in norm for k in ["errorreporting", "error", "bug"]):
-            return "Error Reporting"
+        # 3. Hata Raporlama / Error Reporting Grubu -> 'ERROR_KEY'
+        if any(k in norm for k in ["errorreporting", "error", "bug", "hata", "relatoriodeerros", "reportedeerrores"]):
+            return "ERROR_KEY"
+
         return re.sub(r'\(.*?\)', '', ws_title).strip()
 
 def get_language_handler(lang_code):
-    lang = str(lang_code).upper().strip()
-    if "POR" in lang:
-        return PORLanguageHandler()
-    elif "ESP" in lang:
-        return ESPLanguageHandler()
-    elif "ENG" in lang or "EN" in lang:
-        return ENGLanguageHandler()
-    else:
-        return TRLanguageHandler()
+    return UniversalLanguageHandler()
 
 # ==========================================
-# 🚀 ANA İŞLEYİCİ SINIFA ENTEGRASYON
+# 🚀 QA REPORT WORKER (ANA İŞLEYİCİ)
 # ==========================================
 
 class QAReportWorker:
@@ -275,7 +239,7 @@ class QAReportWorker:
         return counts
 
     def process(self):
-        self.log(f"İşlem Modülü: [{self.handler.__class__.__name__}] | Dil: [{self.selected_lang}] | Dönem: [{self.selected_month_str} {self.selected_year}]")
+        self.log(f"İşlem Başlatıldı | Dil: [{self.selected_lang}] | Dönem: [{self.selected_month_str} {self.selected_year}]")
         self.progress(10)
         client = self.connect()
 
@@ -291,18 +255,18 @@ class QAReportWorker:
 
         for ws in source_worksheets:
             ws_title = ws.title.strip()
-            target_col_name = self.handler.map_category(ws_title)
+            target_col_key = self.handler.map_category(ws_title)
 
-            if not target_col_name:
-                self.log(f"🚫 Pas geçildi (Test/Es geçilen): [{ws_title}]")
+            if not target_col_key:
+                self.log(f"🚫 Pas geçildi (Test Sekmesi): [{ws_title}]")
                 continue
 
-            self.log(f"📊 Sekme Okunuyor: [{ws_title}] ➔ Hedef Sütun: '{target_col_name}'")
+            self.log(f"📊 Sekme Okunuyor: [{ws_title}] ➔ Anahtarlanıyor...")
             user_counts = self.count_user_reports_in_sheet(ws)
             
-            if target_col_name not in category_counts:
-                category_counts[target_col_name] = Counter()
-            category_counts[target_col_name].update(user_counts)
+            if target_col_key not in category_counts:
+                category_counts[target_col_key] = Counter()
+            category_counts[target_col_key].update(user_counts)
 
         self.progress(60)
 
@@ -322,33 +286,43 @@ class QAReportWorker:
                 user_col_in_target = idx
                 break
 
-        # Sütun Eşleştirme Mantığı
+        # SÜTUN BAŞLIKLARINI AKILLI DİL EŞLEŞTİRME
         col_index_map = {}
-        for cat_name in category_counts.keys():
-            cat_strict = normalize_text_strict(cat_name)
-            cat_norm = normalize_text(cat_name)
-            
+        
+        for cat_key in category_counts.keys():
             matched_idx = None
-            
-            # 1. Aşama: Tam Birebir Eşleşme
+
             for idx, h in enumerate(target_headers):
-                if cat_strict == normalize_text_strict(h):
-                    matched_idx = idx
-                    break
-            
-            # 2. Aşama: Kelime Bazlı İçerme Kontrolü (Zula Pass -> Zula Pass vb.)
-            if matched_idx is None:
-                for idx, h in enumerate(target_headers):
-                    h_norm = normalize_text(h)
-                    if cat_norm in h_norm or h_norm in cat_norm:
+                h_norm = normalize_text_strict(h)
+                
+                # Zula Pass / Mission Card Eşleştirme
+                if cat_key == "ZULA_PASS_KEY":
+                    if any(k in h_norm for k in ["zulapass", "pass", "mission", "card", "gkart"]):
                         matched_idx = idx
                         break
 
+                # Genel Check Eşleştirme
+                elif cat_key == "GENEL_CHECK_KEY":
+                    if any(k in h_norm for k in ["genel", "general", "check", "verificacao", "revision"]):
+                        matched_idx = idx
+                        break
+
+                # Error Reporting Eşleştirme
+                elif cat_key == "ERROR_KEY":
+                    if any(k in h_norm for k in ["error", "bug", "hata", "relatorio", "reporte"]):
+                        matched_idx = idx
+                        break
+                
+                # Standart Başlık Eşleşmesi
+                elif cat_key.lower() in h_norm:
+                    matched_idx = idx
+                    break
+
             if matched_idx is not None:
-                col_index_map[cat_name] = matched_idx
-                self.log(f"🎯 Sütun Başarıyla Eşleşti: '{cat_name}' ➔ Sütun {matched_idx + 1} ({target_headers[matched_idx]})")
+                col_index_map[cat_key] = matched_idx
+                self.log(f"🎯 Sütun Başarıyla Bulundu: Sütun {matched_idx + 1} -> ({target_headers[matched_idx]})")
             else:
-                self.log(f"❌ Sütun Eşleşmedi: '{cat_name}' ana tabloda bulunamadı!")
+                self.log(f"❌ UYARI: Hedef tabloda bu kategoriye ait sütun bulunamadı: '{cat_key}'")
 
         target_users = []
         for row_idx, row in enumerate(target_rows[1:], start=2):
@@ -359,11 +333,11 @@ class QAReportWorker:
 
         cell_updates = []
         
-        for cat_name, u_counts in category_counts.items():
-            if cat_name not in col_index_map:
+        for cat_key, u_counts in category_counts.items():
+            if cat_key not in col_index_map:
                 continue
                 
-            target_c_idx = col_index_map[cat_name]
+            target_c_idx = col_index_map[cat_key]
             
             for row_idx, t_name in target_users:
                 total_score = 0
@@ -385,7 +359,7 @@ class QAReportWorker:
             self.log(f"Veriler [{target_sheet.title}] sekmesine yazılıyor... ({len(cell_updates)} hücre)")
             safe_batch_update(target_sheet, cell_updates, self.log)
             self.progress(100)
-            self.log(f"✅ İŞLEM BAŞARILI! [{self.selected_lang}] dili verileri aktarıldı.")
+            self.log(f"✅ İŞLEM TAMAMLANDI! Tüm sütunlar başarıyla işlendi.")
         else:
             self.progress(100)
-            self.log(f"⚠️ Seçilen kriterlere uygun aktarılacak veri bulunamadı.")
+            self.log(f"⚠️ Seçilen tarih/dil kriterine uygun aktarılacak veri bulunamadı.")
