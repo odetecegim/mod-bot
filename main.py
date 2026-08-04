@@ -34,17 +34,17 @@ def check_session_timeout():
 
 check_session_timeout()
 
-# --- YENİ MODERN GİRİŞ ARAYÜZÜ (TAM BOYUT GÖRSEL VE ORTALAMA) ---
+# --- YENİ MODERN GİRİŞ ARAYÜZÜ (1920x1080 ORİJİNAL EN-BOY KORUMALI) ---
 def login_screen():
     bg_image_url = "https://i.ibb.co/6crb7b2Z/image.jpg"
 
     st.markdown(f"""
         <style>
-            /* Arka Plan Görselini Tam Ekran Sığdır / Kapla */
+            /* 1920x1080 Arka Plan Görseli - Oranları Bozmadan Tam Ekran Kaplama */
             .stApp {{
-                background: linear-gradient(rgba(10, 10, 15, 0.70), rgba(10, 10, 15, 0.80)),
+                background: linear-gradient(rgba(10, 10, 15, 0.65), rgba(10, 10, 15, 0.75)),
                             url('{bg_image_url}') no-repeat center center fixed !important;
-                background-size: 100% 100% !important; /* Görseli ekranın tam boyutuna oturtur */
+                background-size: cover !important; /* Görseli sünmeden, oranını bozarak ekranı tam kaplar */
             }}
 
             /* Sayfa Alanını ve Ekran Yüksekliğini Dikey Ortala */
