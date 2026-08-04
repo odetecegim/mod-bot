@@ -171,8 +171,10 @@ def login_screen():
 
     st.markdown('<div class="footer-text">Oturum <span>1 saat</span> boyunca aktif kalır</div>', unsafe_allow_html=True)
 
-# Oturum Doğrulama Kontrolü
-if not st.session_state["authenticated"]:
+# Oturum Doğrulama Kontrolü (Güvenli Kilit Ekranı Yönlendirmesi)
+if not st.session_state.get("authenticated", False) or st.session_state.get("login_time") is None:
+    st.session_state["authenticated"] = False
+    st.session_state["login_time"] = None
     login_screen()
     st.stop()
 
@@ -183,10 +185,14 @@ if not st.session_state["authenticated"]:
 col_title, col_logout = st.columns([3, 1])
 
 with col_title:
-    # Kalan Süre Hesaplama
-    elapsed_time = time.time() - st.session_state["login_time"]
-    remaining_min = int((ONE_HOUR_SECONDS - elapsed_time) / 60)
-    st.caption(f"⏱️ Oturum Süresi: Kalan ~**{remaining_min} dakika**")
+    # Güvenli Kalan Süre Hesaplama (TypeError Önleyici)
+    login_time = st.session_state.get("login_time")
+    if login_time is not None:
+        elapsed_time = time.time() - login_time
+        remaining_min = max(0, int((ONE_HOUR_SECONDS - elapsed_time) / 60))
+        st.caption(f"⏱️ Oturum Süresi: Kalan ~**{remaining_min} dakika**")
+    else:
+        st.caption("⏱️ Oturum Süresi: Belirtilmedi")
 
 with col_logout:
     if st.button("🚪 Çıkış Yap"):
