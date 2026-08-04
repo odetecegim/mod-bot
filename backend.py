@@ -17,7 +17,6 @@ SCOPES = [
 # ==========================================
 
 def normalize_text(text):
-    """Metni karşılaştırma için normalize eder. Boşlukları korur."""
     if not text:
         return ""
     text = str(text).strip().lower()
@@ -29,12 +28,10 @@ def normalize_text(text):
     for k, v in replacements.items():
         text = text.replace(k, v)
     text = unicodedata.normalize('NFKD', text).encode('ASCII', 'ignore').decode('utf-8')
-    # Boşlukları koruyarak sadece alfanümerik olmayan karakterleri temizle
-    text = re.sub(r'[^a-z0-9\s]', '', text)
-    return text.strip()
+    text = re.sub(r'[^a-z0-9\s]', ' ', text) # Özel karakterleri boşluğa çevir (kelimeler yapışmasın)
+    return " ".join(text.split())
 
 def normalize_text_strict(text):
-    """Tam eşleşme için boşluksuz normalize eder."""
     return re.sub(r'\s+', '', normalize_text(text))
 
 _MONTH_MAP_RAW = {
@@ -48,12 +45,9 @@ _MONTH_MAP_RAW = {
     "julho": 7, "agosto": 8, "setembro": 9, "outubro": 10, "novembro": 11, "dezembro": 12
 }
 
-MONTH_MAP = {}
-for k, v in _MONTH_MAP_RAW.items():
-    MONTH_MAP[normalize_text(k)] = v
+MONTH_MAP = {normalize_text(k): v for k, v in _MONTH_MAP_RAW.items()}
 
 def get_month_number(month_str):
-    """Normalize edilmiş ay adından ay numarasını döndürür."""
     return MONTH_MAP.get(normalize_text(month_str), 1)
 
 def calculate_name_similarity(target_name, src_name):
@@ -61,19 +55,17 @@ def calculate_name_similarity(target_name, src_name):
     s_norm = normalize_text(src_name)
     if not t_norm or not s_norm:
         return 0.0
-    # Tam eşleşme veya içerme kontrolü
     t_strict = normalize_text_strict(target_name)
     s_strict = normalize_text_strict(src_name)
     if t_strict == s_strict or s_strict in t_strict or t_strict in s_strict:
         return 1.0
-    # Kelime bazlı kesişim kontrolü
     t_tokens = set(t_norm.split())
     s_tokens = set(s_norm.split())
     if not t_tokens or not s_tokens:
         return 0.0
     return 0.85 if t_tokens.intersection(s_tokens) else 0.0
 
-def safe_batch_update(sheet, updates, log_func, batch_size=40):
+def safe_batch_update(sheet, updates, log_func, batch_size=20):
     total_len = len(updates)
     for i in range(0, total_len, batch_size):
         chunk = updates[i:i + batch_size]
@@ -81,12 +73,14 @@ def safe_batch_update(sheet, updates, log_func, batch_size=40):
         for attempt in range(max_retries):
             try:
                 sheet.batch_update(chunk)
+                time.sleep(0.4)
                 break
-            except APIError as e:
+            except Exception as e:
                 if attempt < max_retries - 1:
-                    log_func("⚠️ API yoğunluğu tespiti. 2 saniye bekleniyor...")
+                    log_func(f"⚠️ API bekleniyor (Deneme {attempt+1}/{max_retries})...")
                     time.sleep(2)
                 else:
+                    log_func(f"❌ Güncelleme Hatası: {str(e)}")
                     raise e
 
 def get_available_spreadsheets(creds_input):
@@ -107,7 +101,6 @@ def get_available_spreadsheets(creds_input):
 # ==========================================
 
 class BaseLanguageHandler:
-    """Tüm diller için ortak olan Temel Sürücü Sınıfı"""
     def is_test_sheet(self, norm_title):
         return any(k in norm_title for k in ["0kullanici", "testedenovo", "pruebadeusuario", "0kul", "test"])
 
@@ -123,56 +116,50 @@ class BaseLanguageHandler:
         return None
 
 class PORLanguageHandler(BaseLanguageHandler):
-    """Portekizce (POR) İçin Özel Kurallar"""
     def map_category(self, ws_title):
-        norm = normalize_text(ws_title)
+        norm = normalize_text_strict(ws_title)
         if self.is_test_sheet(norm):
             return None
-        
         if any(k in norm for k in ["cartaodemissao", "missao", "diaria", "pass"]):
             return "G. Kartı (Günlük)"
-        elif any(k in norm for k in ["verificacaogeral", "relatoriodeerros", "geral"]):
+        elif any(k in norm for k in ["verificacaogeral", "relatoriodeerros", "geral", "check"]):
             return "Genel Check"
-        return ws_title
+        return re.sub(r'\(.*?\)', '', ws_title).strip()
 
 class TRLanguageHandler(BaseLanguageHandler):
-    """Türkçe (TR) İçin Özel Kurallar"""
     def map_category(self, ws_title):
-        norm = normalize_text(ws_title)
+        norm = normalize_text_strict(ws_title)
         if self.is_test_sheet(norm):
             return None
         if any(k in norm for k in ["zulapass", "gunluk", "gkarti"]):
             return "Zula Pass"
         elif any(k in norm for k in ["genelcheck", "genel"]):
             return "Genel"
-        return ws_title
+        return re.sub(r'\(.*?\)', '', ws_title).strip()
 
 class ESPLanguageHandler(BaseLanguageHandler):
-    """İspanyolca (ESP) İçin Özel Kurallar"""
     def map_category(self, ws_title):
-        norm = normalize_text(ws_title)
+        norm = normalize_text_strict(ws_title)
         if self.is_test_sheet(norm):
             return None
-        if any(k in norm for k in ["tarjetademision", "mision", "pass"]):
-            return "Zula Pass"
-        elif any(k in norm for k in ["revisiongeneral", "general"]):
-            return "Genel"
-        return ws_title
+        if any(k in norm for k in ["tarjetademision", "mision", "tarjeta", "pass"]):
+            return "Tarjeta de Misión"
+        elif any(k in norm for k in ["revisiongeneral", "general", "revision"]):
+            return "Revisión General"
+        return re.sub(r'\(.*?\)', '', ws_title).strip()
 
 class ENGLanguageHandler(BaseLanguageHandler):
-    """İngilizce (ENG) İçin Özel Kurallar"""
     def map_category(self, ws_title):
-        norm = normalize_text(ws_title)
+        norm = normalize_text_strict(ws_title)
         if self.is_test_sheet(norm):
             return None
-        if any(k in norm for k in ["missioncard", "pass"]):
-            return "Zula Pass"
+        if any(k in norm for k in ["missioncard", "mission", "pass"]):
+            return "Mission Card"
         elif any(k in norm for k in ["generalcheck", "general"]):
-            return "Genel"
-        return ws_title
+            return "General Check"
+        return re.sub(r'\(.*?\)', '', ws_title).strip()
 
 def get_language_handler(lang_code):
-    """Dile göre ilgili modülü döndüren fabrika fonksiyonu"""
     lang = str(lang_code).upper().strip()
     if "POR" in lang:
         return PORLanguageHandler()
@@ -198,7 +185,6 @@ class QAReportWorker:
         self.selected_month_str = selected_month
         self.log = log_callback
         self.progress = progress_callback
-        
         self.handler = get_language_handler(self.selected_lang)
 
     def connect(self):
@@ -214,19 +200,16 @@ class QAReportWorker:
         target_month = normalize_text(self.selected_month_str)
         target_year = str(self.selected_year).strip()
 
-        # 1. Dil + Ay + Yıl tam eşleşme
         for ws in all_worksheets:
             t_lower = normalize_text(ws.title)
             if target_lang in t_lower and target_month in t_lower and target_year in t_lower:
                 return ws
 
-        # 2. Dil + Ay eşleşme
         for ws in all_worksheets:
             t_lower = normalize_text(ws.title)
             if target_lang in t_lower and target_month in t_lower:
                 return ws
 
-        # 3. Sadece dil eşleşme
         for ws in all_worksheets:
             t_lower = normalize_text(ws.title)
             if target_lang in t_lower:
@@ -249,19 +232,18 @@ class QAReportWorker:
         date_col_idx = -1
         user_col_idx = -1
 
+        # Gelişmiş Tarih ve Kullanıcı Sütun Tespiti (ENG, POR, ESP Uyumlu)
         for idx, h in enumerate(headers):
-            if any(d in h for d in ["tarih", "data", "date", "fecha"]):
+            if any(d in h for d in ["tarih", "data", "date", "fecha", "zaman"]):
                 date_col_idx = idx
-            if any(u in h for u in ["apelido", "nome", "user", "kullanici", "name", "reporter", "nick"]):
-                user_col_idx = idx
+            if any(u in h for u in ["name", "surname", "apelido", "nome", "user", "kullanici", "reporter", "nick", "nombre", "apellido"]):
+                if user_col_idx == -1:
+                    user_col_idx = idx
 
         if user_col_idx == -1:
             user_col_idx = 1 if len(headers) > 1 else 0
-        
-        # Tarih sütunu bulunamazsa None olarak bırak, 0 yapma
+
         has_date_col = date_col_idx != -1
-        if not has_date_col:
-            date_col_idx = 0  # Geçici, ama kontrol altında
 
         counts = Counter()
 
@@ -278,18 +260,13 @@ class QAReportWorker:
             if not user_name:
                 continue
 
-            # Tarih kontrolü
             if has_date_col and date_col_idx < len(row_vals):
                 date_val = row_vals[date_col_idx]
                 dt = self.handler.parse_date(date_val)
                 if dt:
                     if dt.year == self.selected_year and dt.month == self.selected_month_num:
                         counts[user_name] += 1
-                else:
-                    # Tarih okunamadıysa bu satırı atla (tarih sütunu varsa)
-                    pass
             else:
-                # Tarih sütunu yoksa tüm satırları say
                 counts[user_name] += 1
 
         return counts
@@ -337,23 +314,42 @@ class QAReportWorker:
         user_col_in_target = 0
         for idx, h in enumerate(target_headers):
             h_norm = normalize_text(h)
-            if any(k in h_norm for k in ["kullanici", "user", "name", "qa", "ad", "apelido", "nombre"]):
+            if any(k in h_norm for k in ["kullanici", "user", "name", "qa", "ad", "apelido", "nombre", "sobrenome", "apellido"]):
                 user_col_in_target = idx
                 break
 
-        # Sütun eşleştirme: normalize edilmiş başlıklarla substring kontrolü
+        # Sütun Eşleştirme (Gelişmiş Çok Aşamalı Arama)
         col_index_map = {}
         for cat_name in category_counts.keys():
-            cat_norm = normalize_text(cat_name)
             cat_strict = normalize_text_strict(cat_name)
+            cat_norm = normalize_text(cat_name)
+            
+            matched_idx = None
+            # 1. Tam Eşleşme (Strict)
             for idx, h in enumerate(target_headers):
-                h_norm = normalize_text(h)
-                h_strict = normalize_text_strict(h)
-                # Esnek eşleştirme: substring veya tam eşleşme
-                if (cat_norm in h_norm or h_norm in cat_norm or 
-                    cat_strict == h_strict or cat_strict in h_strict or h_strict in cat_strict):
-                    col_index_map[cat_name] = idx
+                if cat_strict == normalize_text_strict(h):
+                    matched_idx = idx
                     break
+            
+            # 2. İçerme Kontrolü
+            if matched_idx is None:
+                for idx, h in enumerate(target_headers):
+                    h_strict = normalize_text_strict(h)
+                    if cat_strict in h_strict or h_strict in cat_strict:
+                        matched_idx = idx
+                        break
+
+            # 3. Kelime Kökü Kontrolü (ENG/POR/ESP İçin Esnek)
+            if matched_idx is None:
+                cat_words = set(cat_norm.split())
+                for idx, h in enumerate(target_headers):
+                    h_words = set(normalize_text(h).split())
+                    if cat_words and h_words and cat_words.intersection(h_words):
+                        matched_idx = idx
+                        break
+
+            if matched_idx is not None:
+                col_index_map[cat_name] = matched_idx
 
         target_users = []
         for row_idx, row in enumerate(target_rows[1:], start=2):
@@ -379,9 +375,10 @@ class QAReportWorker:
                         total_score += count
 
                 if total_score > 0:
+                    a1_cell = gspread.utils.rowcol_to_a1(row_idx, target_c_idx + 1)
                     cell_updates.append({
-                        'range': gspread.utils.rowcol_to_a1(row_idx, target_c_idx + 1),
-                        'values': [[total_score]]
+                        'range': f"{a1_cell}:{a1_cell}",
+                        'values': [[int(total_score)]]
                     })
 
         self.progress(85)
@@ -390,7 +387,7 @@ class QAReportWorker:
             self.log(f"Veriler [{target_sheet.title}] sekmesine yazılıyor... ({len(cell_updates)} hücre)")
             safe_batch_update(target_sheet, cell_updates, self.log)
             self.progress(100)
-            self.log(f"✅ İŞLEM BAŞARILI! [{self.selected_lang}] dili kendi modülüyle güvenle işlendi.")
+            self.log(f"✅ İŞLEM BAŞARILI! [{self.selected_lang}] dili verileri ana rapora aktarıldı.")
         else:
             self.progress(100)
             self.log(f"⚠️ Seçilen kriterlere uygun aktarılacak veri bulunamadı.")
