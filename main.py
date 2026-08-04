@@ -128,40 +128,6 @@ def login_screen():
                 font-weight: 700;
             }
         </style>
-
-        <script>
-            document.addEventListener('mousemove', function(e) {
-                let star = document.createElement('div');
-                star.className = 'star-particle';
-                star.innerHTML = '★';
-                
-                star.style.left = e.clientX + 'px';
-                star.style.top = e.clientY + 'px';
-                
-                let size = Math.random() * 12 + 10;
-                star.style.fontSize = size + 'px';
-                star.style.position = 'fixed';
-                star.style.color = '#ef4444';
-                star.style.textShadow = '0 0 8px #dc2626, 0 0 15px #ff0000';
-                star.style.pointerEvents = 'none';
-                star.style.zIndex = '999999';
-                star.style.transition = 'all 0.6s linear';
-                star.style.transform = `translate(-50%, -50%) rotate(${Math.random() * 360}deg)`;
-                star.style.opacity = '1';
-                
-                document.body.appendChild(star);
-                
-                setTimeout(() => {
-                    star.style.top = (e.clientY + 20) + 'px';
-                    star.style.opacity = '0';
-                    star.style.transform += ' scale(0.3)';
-                }, 50);
-                
-                setTimeout(() => {
-                    star.remove();
-                }, 600);
-            });
-        </script>
     """, unsafe_allow_html=True)
 
     st.markdown('<div class="icon-box"><img src="https://i.ibb.co/JRkyN71r/logo.png" alt="Teşkilat Logo"></div>', unsafe_allow_html=True)
@@ -191,7 +157,7 @@ if not st.session_state["authenticated"]:
     st.stop()
 
 # ==============================================================================
-# === GİRİŞ YAPILDISAN SONRA GÖRÜNECEK ANA PANEL ===
+# === GİRİŞ YAPILDIKTAN SONRA GÖRÜNECEK ANA PANEL ===
 # ==============================================================================
 
 col_title, col_logout = st.columns([4, 1])
@@ -206,9 +172,16 @@ st.caption("Google Sheets verilerini seçilen Ay ve Yıl'a göre otomatik eşle�
 # --- GOOGLE CREDENTIALS YÖNETİMİ ---
 @st.cache_resource
 def get_credentials():
-    if "GCP_SERVICE_ACCOUNT" in st.secrets:
+    # Secrets anahtarları hem küçük hem büyük harf kombinasyonuyla taranır
+    sec_key = None
+    for k in ["gcp_service_account", "GCP_SERVICE_ACCOUNT", "GOOGLE_CREDENTIALS", "google_credentials"]:
+        if k in st.secrets:
+            sec_key = k
+            break
+
+    if sec_key:
         try:
-            sec = st.secrets["GCP_SERVICE_ACCOUNT"]
+            sec = st.secrets[sec_key]
             if isinstance(sec, (dict, st.runtime.secrets.AttrDict)):
                 creds = dict(sec)
             elif isinstance(sec, str):
@@ -231,11 +204,6 @@ def get_credentials():
         except Exception as e:
             st.error(f"Secrets okuma hatası: {e}")
             return None
-    elif "GOOGLE_CREDENTIALS" in st.secrets:
-        creds = dict(st.secrets["GOOGLE_CREDENTIALS"])
-        if "private_key" in creds:
-            creds["private_key"] = str(creds["private_key"]).replace("\\n", "\n")
-        return creds
     elif os.path.exists("credentials.json"):
         return "credentials.json"
     else:
@@ -244,17 +212,29 @@ def get_credentials():
 creds_input = get_credentials()
 
 if not creds_input:
-    st.error("❌ Google bağlantı bilgileri bulunamadı! Lütfen Streamlit Secrets ayarlarını kontrol edin.")
+    st.error("❌ Google bağlantı bilgileri bulunamadı! Lütfen Streamlit Secrets ayarlarınızı kontrol edin.")
     st.stop()
 
-# --- TABLOLARI LİSTELE VE AYRIŞTIR ---
+# --- TABLOLARI LİSTELE VE AYRIŞTIR (HATA GİDERİLEN KISIM) ---
 try:
     sheets_data = get_available_spreadsheets(creds_input)
-    source_sheets_dict = sheets_data["source"]
-    report_sheets_dict = sheets_data["report"]
+    
+    # Backend'den 'error' gelip gelmediği kontrolü
+    if "error" in sheets_data:
+        st.error(f"❌ Google Sheets Bağlantı Hatası: {sheets_data['error']}")
+        st.stop()
+
+    # Esnek anahtar alma (all, source veya report fark etmeksizin)
+    source_sheets_dict = sheets_data.get("source", sheets_data.get("all", {}))
+    report_sheets_dict = sheets_data.get("report", sheets_data.get("all", {}))
     
     source_options = list(source_sheets_dict.keys())
     report_options = list(report_sheets_dict.keys())
+
+    if not source_options:
+        st.warning("⚠️ Erişilebilir Google Sheet bulunamadı. Tabloları Service Account e-postası ile paylaştığınızdan emin olun.")
+        st.stop()
+
 except Exception as e:
     st.error(f"Google Drive bağlantı hatası: {e}")
     st.stop()
@@ -273,7 +253,7 @@ with st.form("qa_form"):
     with col3:
         selected_lang = st.selectbox("Dil", ["Tümü", "ENG", "ESP", "POR", "TR"])
     with col4:
-        months = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
+        months = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylul", "Ekim", "Kasım", "Aralık"]
         selected_month = st.selectbox("Ay", months, index=6)
     with col5:
         selected_year = st.selectbox("Yıl", ["2025", "2026", "2027"], index=1)
