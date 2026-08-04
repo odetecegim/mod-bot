@@ -51,19 +51,43 @@ def get_month_number(month_str):
     return MONTH_MAP.get(normalize_text(month_str), 1)
 
 def calculate_name_similarity(target_name, src_name):
+    """
+    İsim benzerliği hesaplar.
+
+    DÜZELTME NOTU:
+    Eski sürüm, ham karakter dizisi substring kontrolü ("Ana" in "Anastasia")
+    ve tek kelime kesişimi (sadece "Maria" ortak diye "Maria Garcia" ile
+    "Maria Lopez" eşleşmesi gibi) kullanıyordu. Bu, özellikle İspanyolca ve
+    Portekizce'de çok yaygın olan kısa isimler (Ana, Eva, Leo...) ve bağlaç
+    kelimeleri (de, dos, da, y) yüzünden farklı kullanıcıların verilerinin
+    yanlışlıkla aynı satırda birleşmesine (toplu/karışık veri) yol açıyordu.
+
+    Yeni mantık: bir ismin kelimelerinin TAMAMI diğer ismin kelimelerinin
+    içinde varsa (tam alt küme) eşleşme kabul edilir. Kısmi / tek kelimelik
+    kesişimler artık eşleşme saymaz.
+    """
     t_norm = normalize_text(target_name)
     s_norm = normalize_text(src_name)
     if not t_norm or not s_norm:
         return 0.0
+
     t_strict = normalize_text_strict(target_name)
     s_strict = normalize_text_strict(src_name)
-    if t_strict == s_strict or s_strict in t_strict or t_strict in s_strict:
+
+    if t_strict == s_strict:
         return 1.0
+
     t_tokens = set(t_norm.split())
     s_tokens = set(s_norm.split())
     if not t_tokens or not s_tokens:
         return 0.0
-    return 0.85 if t_tokens.intersection(s_tokens) else 0.0
+
+    # Bir ismin kelimelerinin tamamı diğerinde varsa (örn. "Maria" ⊂ "Maria Garcia",
+    # ya da kelime sırası ters yazılmışsa "Garcia Maria" == "Maria Garcia") aynı kişi kabul edilir.
+    if t_tokens <= s_tokens or s_tokens <= t_tokens:
+        return 1.0
+
+    return 0.0
 
 def safe_batch_update(sheet, updates, log_func, batch_size=20):
     total_len = len(updates)
@@ -117,7 +141,7 @@ class UniversalLanguageHandler:
 
     def map_category(self, ws_title):
         norm = normalize_text_strict(ws_title)
-        
+
         # Test Sekmelerini pas geç
         if self.is_test_sheet(norm):
             return None
@@ -245,7 +269,7 @@ class QAReportWorker:
 
         source_wb = client.open_by_key(self.source_id)
         report_wb = client.open_by_key(self.report_id)
-        
+
         target_sheet = self.get_target_worksheet(report_wb)
         self.log(f"Hedef Sekme: [{target_sheet.title}]")
         self.progress(25)
@@ -263,7 +287,7 @@ class QAReportWorker:
 
             self.log(f"📊 Sekme Okunuyor: [{ws_title}] ➔ Anahtarlanıyor...")
             user_counts = self.count_user_reports_in_sheet(ws)
-            
+
             if target_col_key not in category_counts:
                 category_counts[target_col_key] = Counter()
             category_counts[target_col_key].update(user_counts)
@@ -288,13 +312,13 @@ class QAReportWorker:
 
         # SÜTUN BAŞLIKLARINI AKILLI DİL EŞLEŞTİRME
         col_index_map = {}
-        
+
         for cat_key in category_counts.keys():
             matched_idx = None
 
             for idx, h in enumerate(target_headers):
                 h_norm = normalize_text_strict(h)
-                
+
                 # Zula Pass / Mission Card Eşleştirme
                 if cat_key == "ZULA_PASS_KEY":
                     if any(k in h_norm for k in ["zulapass", "pass", "mission", "card", "gkart"]):
@@ -312,7 +336,7 @@ class QAReportWorker:
                     if any(k in h_norm for k in ["error", "bug", "hata", "relatorio", "reporte"]):
                         matched_idx = idx
                         break
-                
+
                 # Standart Başlık Eşleşmesi
                 elif cat_key.lower() in h_norm:
                     matched_idx = idx
@@ -332,13 +356,13 @@ class QAReportWorker:
                     target_users.append((row_idx, u_name))
 
         cell_updates = []
-        
+
         for cat_key, u_counts in category_counts.items():
             if cat_key not in col_index_map:
                 continue
-                
+
             target_c_idx = col_index_map[cat_key]
-            
+
             for row_idx, t_name in target_users:
                 total_score = 0
                 for src_name, count in u_counts.items():
