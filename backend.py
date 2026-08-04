@@ -1,8 +1,10 @@
 import datetime
 import re
+import time
 import unicodedata
 from collections import Counter
 import gspread
+from gspread.exceptions import APIError
 from google.oauth2.service_account import Credentials
 
 SCOPES = [
@@ -22,7 +24,7 @@ MONTH_MAP = {
 }
 
 def normalize_text(text):
-    """Metni tamamen temizler, küçük harfe ve düz Latin alfabesine çevirir."""
+    """Metni tamamen küçük harfe çevirir, özel karakterleri temizler ve aradaki tüm boşlukları siler."""
     if not text:
         return ""
     text = str(text).strip().lower()
@@ -34,20 +36,16 @@ def normalize_text(text):
     for k, v in replacements.items():
         text = text.replace(k, v)
     text = unicodedata.normalize('NFKD', text).encode('ASCII', 'ignore').decode('utf-8')
-    text = re.sub(r'[^a-z0-9]', '', text) # Tüm sembol ve boşlukları temizleyerek yalın hale getirir
+    text = re.sub(r'[^a-z0-9]', '', text)
     return text
 
 def calculate_name_similarity(target_name, src_name):
-    """
-    Nick, İsim veya Soyisim içeren Portekizce kullanıcıları ana tablo ile esnek eşleştirir.
-    """
     t_norm = normalize_text(target_name)
     s_norm = normalize_text(src_name)
     
     if not t_norm or not s_norm:
         return 0.0
     
-    # Birebir eşleşme veya birinin diğerinin içinde geçmesi (Nick / İsim durumu)
     if t_norm == s_norm or s_norm in t_norm or t_norm in s_norm:
         return 1.0
 
@@ -62,6 +60,23 @@ def calculate_name_similarity(target_name, src_name):
         return 0.85
 
     return 0.0
+
+def safe_batch_update(sheet, updates, log_func, batch_size=40):
+    """Google API 500 hatalarını engellemek için küçük paketler halinde güncelleme yapar."""
+    total_len = len(updates)
+    for i in range(0, total_len, batch_size):
+        chunk = updates[i:i + batch_size]
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                sheet.batch_update(chunk)
+                break
+            except APIError as e:
+                if attempt < max_retries - 1:
+                    log_func(f"⚠️ API yoğunluğu tespiti. 2 saniye içinde tekrar deneniyor...")
+                    time.sleep(2)
+                else:
+                    raise e
 
 def get_available_spreadsheets(creds_input):
     if isinstance(creds_input, dict):
@@ -139,7 +154,11 @@ class QAReportWorker:
         return report_wb.sheet1
 
     def count_user_reports_in_sheet(self, sheet):
-        raw_rows = sheet.get_all_values()
+        try:
+            raw_rows = sheet.get_all_values()
+        except Exception:
+            return Counter()
+
         if not raw_rows or len(raw_rows) <= 1:
             return Counter()
 
@@ -149,13 +168,12 @@ class QAReportWorker:
         date_col_idx = 0
         user_col_idx = -1
 
-        # Kullanıcı/Apelido/Nick sütununu ara
         for idx, h in enumerate(headers):
             if any(u in h for u in ["apelido", "nome", "user", "kullanici", "name", "reporter", "nick"]):
                 user_col_idx = idx
                 break
         if user_col_idx == -1:
-            user_col_idx = 1 # Varsayılan olarak 2. sütun (B Sütunu)
+            user_col_idx = 1
 
         counts = Counter()
         fallback_counts = Counter()
@@ -182,7 +200,6 @@ class QAReportWorker:
                     elif dt.month == self.selected_month_num:
                         fallback_counts[user_name] += 1
                 else:
-                    # Tarih okunamadıysa da veriyi düşürmemek için sayıya ekler
                     fallback_counts[user_name] += 1
 
         return counts if sum(counts.values()) > 0 else fallback_counts
@@ -202,27 +219,27 @@ class QAReportWorker:
         source_worksheets = source_wb.worksheets()
         category_counts = {}
 
-        # 1. POR/ESP/ENG SEKMELERİNİ KATILIKSIZ TÜRKÇE SÜTUNLARA HARİTALA
+        # 1. POR KATEGORİLERİNİ GÖRSELDEKİ SÜTUN BAŞLIKLARINA BAĞLAMA
         for ws in source_worksheets:
             ws_title = ws.title.strip()
             norm_title = normalize_text(ws_title)
 
-            # Test sekmelerini pas geç
-            if "0kullanici" in norm_title or "testedenovo" in norm_title or "pruebadeusuario" in norm_title:
+            # Test sekmelerini atla
+            if "0kullanici" in norm_title or "testedenovo" in norm_title or "pruebadeusuario" in norm_title or "0kul" in norm_title:
                 self.log(f"🚫 Pas geçildi: [{ws_title}]")
                 continue
 
             target_col_name = ""
-            # Portekizce: "Cartão De Missão (günlük)" veya "Missão" -> Zula Pass
-            if any(k in norm_title for k in ["cartaodemissao", "missao", "zula pass", "gunluk", "tarjetademision", "missioncard"]):
-                target_col_name = "Zula Pass"
-            # Portekizce: "Verificação Geral (genel)" veya "Geral" -> Genel
-            elif any(k in norm_title for k in ["verificacaogeral", "relatoriodeerros", "geral", "genel", "revisiongeneral", "generalcheck"]):
-                target_col_name = "Genel"
+            # Portekizce sekme isimlerini görseldeki "G. Kartı (Günlük)" başlığına bağlar
+            if any(k in norm_title for k in ["cartaodemissao", "missao", "gkarti", "gunluk", "tarjetademision", "missioncard", "pass"]):
+                target_col_name = "G. Kartı (Günlük)"
+            # Portekizce sekme isimlerini görseldeki "Genel Check" başlığına bağlar
+            elif any(k in norm_title for k in ["verificacaogeral", "relatoriodeerros", "genelcheck", "genel", "geral", "revisiongeneral", "generalcheck"]):
+                target_col_name = "Genel Check"
             else:
                 target_col_name = ws_title
 
-            self.log(f"📊 İşleniyor: [{ws_title}] ➔ Hedef Sütun: '{target_col_name}'")
+            self.log(f"📊 Sekme Okunuyor: [{ws_title}] ➔ Ana Tablo Sütunu: '{target_col_name}'")
             user_counts = self.count_user_reports_in_sheet(ws)
             
             if target_col_name not in category_counts:
@@ -231,7 +248,7 @@ class QAReportWorker:
 
         self.progress(60)
 
-        # 2. HEDEF TABLOYU VE SÜTUNLARI TESPİT ET
+        # 2. HEDEF TABLONUN SÜTUN İNDEKSLERİNİ GÖRSELE GÖRE TESPİT ET
         target_rows = target_sheet.get_all_values()
         if not target_rows:
             self.log("⚠️ Ana tabloda veri bulunamadı!")
@@ -249,8 +266,11 @@ class QAReportWorker:
 
         col_index_map = {}
         for cat_name in category_counts.keys():
+            cat_norm = normalize_text(cat_name)
             for idx, h in enumerate(target_headers):
-                if normalize_text(cat_name) in normalize_text(h):
+                h_norm = normalize_text(h)
+                # Tam veya esnek başlık eşleşmesi ("gkarti", "genelcheck" vb.)
+                if cat_norm in h_norm or h_norm in cat_norm:
                     col_index_map[cat_name] = idx
                     break
 
@@ -263,7 +283,7 @@ class QAReportWorker:
 
         cell_updates = []
         
-        # 3. PUANLARI HESAPLA VE HÜCRELERE YAZILACAK ŞEKİLDE HAZIRLA
+        # 3. VERİLERİ SÜTUNLARA YAZMA
         for cat_name, u_counts in category_counts.items():
             if cat_name not in col_index_map:
                 continue
@@ -285,12 +305,11 @@ class QAReportWorker:
 
         self.progress(85)
 
-        # 4. GÜNCELLEMELERİ TOPLU AKTAR (BATCH UPDATE)
         if cell_updates:
-            self.log(f"Portekizce (POR) verileri [{target_sheet.title}] sekmesine aktarılıyor...")
-            target_sheet.batch_update(cell_updates)
+            self.log(f"Portekizce veriler 'G. Kartı (Günlük)' ve 'Genel Check' sütunlarına aktarılıyor...")
+            safe_batch_update(target_sheet, cell_updates, self.log)
             self.progress(100)
-            self.log(f"✅ BAŞARILI! POR dilindeki tüm sekmeler okundu ve ana tabloya başarıyla işlendi.")
+            self.log(f"✅ İŞLEM BAŞARILI! POR verileri görseldeki sütunlara eksiksiz yazıldı.")
         else:
             self.progress(100)
-            self.log(f"⚠️ Uyarı: POR tablosundan çekilen veriler ana tablodaki isimlerle eşleşmedi. İsim listesini kontrol ediniz.")
+            self.log(f"⚠️ Uyarı: POR verileri ile hedef sütunlar/isimler eşleşmedi.")
