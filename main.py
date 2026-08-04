@@ -1,8 +1,10 @@
 import os
 import json
+import base64
 import streamlit as st
 from backend import QAReportWorker, get_available_spreadsheets
 
+# Sayfa Yapılandırması
 st.set_page_config(
     page_title="QA Raporlama Paneli",
     page_icon="📊",
@@ -15,20 +17,26 @@ st.caption("Google Sheets verilerini seçilen Ay ve Yıl'a göre otomatik eşle�
 # --- GOOGLE CREDENTIALS YÖNETİMİ ---
 @st.cache_resource
 def get_credentials():
-    if "GOOGLE_CREDENTIALS" in st.secrets:
-        # Streamlit secrets TOML objesini düzgün dictionary'e dönüştür
+    # 1. Base64 veya String JSON secrets kontrolü
+    if "GCP_SERVICE_ACCOUNT" in st.secrets:
+        try:
+            raw_cred = st.secrets["GCP_SERVICE_ACCOUNT"]
+            try:
+                decoded = base64.b64decode(raw_cred).decode('utf-8')
+                creds = json.loads(decoded)
+            except Exception:
+                creds = json.loads(raw_cred)
+            return creds
+        except Exception as e:
+            st.error(f"Secrets okuma hatası: {e}")
+            return None
+    # 2. TOML objesi kontrolü (Alternatif format)
+    elif "GOOGLE_CREDENTIALS" in st.secrets:
         creds = dict(st.secrets["GOOGLE_CREDENTIALS"])
-        
-        # Private key format düzeltmesi
         if "private_key" in creds:
-            pk = creds["private_key"]
-            # Çift kaçış karakterlerini ve hatalı tırnakları temizle
-            pk = pk.replace("\\n", "\n").strip()
-            if pk.startswith('"') and pk.endswith('"'):
-                pk = pk[1:-1]
-            creds["private_key"] = pk
-            
+            creds["private_key"] = creds["private_key"].replace("\\n", "\n")
         return creds
+    # 3. Yerel dosya kontrolü
     elif os.path.exists("credentials.json"):
         return "credentials.json"
     else:
@@ -69,6 +77,7 @@ with st.form("qa_form"):
 
     submit_button = st.form_submit_button("🚀 Raporu Güncelle", use_container_width=True)
 
+# --- İŞLEM BAŞLATMA VE LOG EKRANI ---
 if submit_button:
     source_id = spreadsheet_dict[source_name]
     report_id = spreadsheet_dict[report_name]
