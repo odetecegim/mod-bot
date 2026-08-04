@@ -210,6 +210,30 @@ class QAReportWorker:
 
         return report_wb.sheet1
 
+    def _detect_date_column_by_content(self, data_rows, sample_size=15):
+        """
+        Başlıktan tarih sütunu bulunamadığında yedek yöntem: ilk birkaç satırın
+        hücre içeriklerini parse_date ile deneyerek hangi sütunun büyük
+        oranda geçerli tarih içerdiğini tespit eder.
+        """
+        if not data_rows:
+            return -1
+        sample = data_rows[:sample_size]
+        max_cols = max((len(r) for r in sample), default=0)
+        best_idx, best_hits = -1, 0
+        for col in range(max_cols):
+            hits = 0
+            checked = 0
+            for row in sample:
+                if col < len(row) and str(row[col]).strip():
+                    checked += 1
+                    if self.handler.parse_date(row[col]):
+                        hits += 1
+            if checked and (hits / checked) >= 0.6 and hits > best_hits:
+                best_hits = hits
+                best_idx = col
+        return best_idx
+
     def count_user_reports_in_sheet(self, sheet):
         try:
             raw_rows = sheet.get_all_values()
@@ -235,7 +259,22 @@ class QAReportWorker:
         if user_col_idx == -1:
             user_col_idx = 1 if len(headers) > 1 else 0
 
+        if date_col_idx == -1:
+            fallback_idx = self._detect_date_column_by_content(data_rows)
+            if fallback_idx != -1:
+                date_col_idx = fallback_idx
+                self.log(f"ℹ️ [{sheet.title}] Tarih sütunu başlıktan bulunamadı, içerik analiziyle tespit edildi: sütun {date_col_idx + 1}")
+
         has_date_col = date_col_idx != -1
+
+        if not has_date_col:
+            # ÖNEMLİ: Tarih sütunu bulunamıyorsa asla tüm veriyi (tarihsiz)
+            # saymıyoruz — bu, seçilen ay/yıl fark etmeksizin "toplam veri"
+            # yazılmasına yol açan asıl hataydı. Bunun yerine bu sekmeyi
+            # atlayıp log'a net bir uyarı bırakıyoruz.
+            self.log(f"⚠️ [{sheet.title}] Tarih sütunu bulunamadı! Bu sekme, tarihe göre filtrelenemediği için atlandı (veri yazılmadı).")
+            return Counter()
+
         counts = Counter()
 
         for row_vals in data_rows:
