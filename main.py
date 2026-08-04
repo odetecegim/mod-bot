@@ -6,7 +6,7 @@ from backend import QAReportWorker, get_available_spreadsheets
 
 # Sayfa Yapılandırması
 st.set_page_config(
-    page_title="Control Center — Zula Teşkilat Girişi",
+    page_title="Control Center — QA Teşkilat Girişi",
     page_icon="🔴",
     layout="centered",
     initial_sidebar_state="collapsed"
