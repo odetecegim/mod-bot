@@ -4,21 +4,29 @@ from backend import QAReportWorker, get_available_spreadsheets
 
 st.set_page_config(page_title="Rapor Eşleştirme Paneli", layout="wide")
 
-st.title("📊 Akademi Raporu İşleme Paneli")
+st.title("📊 QA Raporu Otomatik İşleme Paneli")
 st.caption("Google Sheets verilerini seçilen Dil, Ay ve Yıl'a göre tam eşleşmeyle güncelleyin.")
 
-# Creds / Bağlantı Yükleme (Secrets veya Local File)
+# Creds / Bağlantı Yükleme (Streamlit Secrets veya Local credentials.json)
 creds_data = st.secrets["gcp_service_account"] if "gcp_service_account" in st.secrets else "credentials.json"
 
 # Tabloları Çek
 sheets_dict = get_available_spreadsheets(creds_data)
+
+# Hata Kontrolü ve Detaylı Bilgilendirme
+if "error" in sheets_dict:
+    st.error(f"❌ Google Sheets Bağlantı Hatası: {sheets_dict['error']}")
+    st.info("💡 Lütfen `credentials.json` dosyanızı veya Streamlit Secrets (`[gcp_service_account]`) ayarlarınızı kontrol edin.")
+    st.stop()
+
 all_options = list(sheets_dict.get("all", {}).keys())
 
 if not all_options:
-    st.error("❌ Google Sheets bağlantısı kurulamadı. Lütfen API yetkilerini kontrol edin.")
+    st.warning("⚠️ Google Sheets bağlantısı başarılı fakat erişilebilen hiç tablo bulunamadı.")
+    st.info("💡 Lütfen işlem yapacağınız Google Sheets tablolarını Service Account e-postanız ile **Paylaş (Share)** kısmından Düzenleyen (Editor) olarak paylaşın.")
     st.stop()
 
-# 2. Görseldeki gibi Sekmeli Mimari
+# Dil Sekmeleri Paneli
 tab_eng, tab_por, tab_esp, tab_tr = st.tabs([
     "🇬🇧 ENG Raporu", 
     "🇵🇹 POR Raporu", 
@@ -32,7 +40,7 @@ YEARS = [2024, 2025, 2026, 2027]
 def render_language_panel(lang_code):
     col1, col2 = st.columns(2)
     
-    # Varsayılan tablo seçimi mantığı
+    # Varsayılan tablo seçimi
     default_src = next((s for s in all_options if lang_code in s.upper()), all_options[0])
     default_rep = next((s for s in all_options if "PERF" in s.upper() or "GLOBAL" in s.upper()), all_options[0])
 
@@ -53,9 +61,9 @@ def render_language_panel(lang_code):
 
     col3, col4 = st.columns(2)
     with col3:
-        selected_month = st.selectbox("Ay", MONTHS, index=6, key=f"month_{lang_code}") # Temmuz Varsayılan
+        selected_month = st.selectbox("Ay", MONTHS, index=6, key=f"month_{lang_code}") # Temmuz
     with col4:
-        selected_year = st.selectbox("Yıl", YEARS, index=2, key=f"year_{lang_code}")   # 2026 Varsayılan
+        selected_year = st.selectbox("Yıl", YEARS, index=2, key=f"year_{lang_code}")   # 2026
 
     if st.button(f"🚀 {lang_code} Raporunu Güncelle", use_container_width=True, key=f"btn_{lang_code}"):
         source_id = sheets_dict["all"][source_name]
@@ -87,9 +95,8 @@ def render_language_panel(lang_code):
             worker.process()
             st.success(f"✅ {lang_code} işlemi tamamlandı!")
         except Exception as e:
-            st.error(f"❌ İşlem sırasında bir hata oluştu: {str(e)}")
+            st.error(f"❌ İşlem sırasında hata oluştu: {str(e)}")
 
-# Her sekme içeriğini render et
 with tab_eng:
     render_language_panel("ENG")
 
