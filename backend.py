@@ -102,7 +102,7 @@ def get_available_spreadsheets(creds_input):
 
 class BaseLanguageHandler:
     def is_test_sheet(self, norm_title):
-        return any(k in norm_title for k in ["0kullanici", "testedenovo", "pruebadeusuario", "0kul", "test"])
+        return any(k in norm_title for k in ["0kullanici", "testedenovo", "pruebadeusuario", "0kul", "test", "0kullanici"])
 
     def parse_date(self, date_val):
         if not date_val:
@@ -153,10 +153,12 @@ class ENGLanguageHandler(BaseLanguageHandler):
         norm = normalize_text_strict(ws_title)
         if self.is_test_sheet(norm):
             return None
-        if any(k in norm for k in ["missioncard", "mission", "pass"]):
+        if any(k in norm for k in ["missioncard", "mission"]):
             return "Mission Card"
         elif any(k in norm for k in ["generalcheck", "general"]):
             return "General Check"
+        elif any(k in norm for k in ["errorreporting", "error", "bug"]):
+            return "Error Reporting"
         return re.sub(r'\(.*?\)', '', ws_title).strip()
 
 def get_language_handler(lang_code):
@@ -232,7 +234,6 @@ class QAReportWorker:
         date_col_idx = -1
         user_col_idx = -1
 
-        # Gelişmiş Tarih ve Kullanıcı Sütun Tespiti (ENG, POR, ESP Uyumlu)
         for idx, h in enumerate(headers):
             if any(d in h for d in ["tarih", "data", "date", "fecha", "zaman"]):
                 date_col_idx = idx
@@ -244,7 +245,6 @@ class QAReportWorker:
             user_col_idx = 1 if len(headers) > 1 else 0
 
         has_date_col = date_col_idx != -1
-
         counts = Counter()
 
         for row_vals in data_rows:
@@ -310,7 +310,8 @@ class QAReportWorker:
             return
 
         target_headers = [str(h).strip() for h in target_rows[0]]
-        
+        self.log(f"🔍 Ana Tabloda Bulunan Başlıklar: {target_headers}")
+
         user_col_in_target = 0
         for idx, h in enumerate(target_headers):
             h_norm = normalize_text(h)
@@ -318,38 +319,43 @@ class QAReportWorker:
                 user_col_in_target = idx
                 break
 
-        # Sütun Eşleştirme (Gelişmiş Çok Aşamalı Arama)
+        # Sütun Eşleştirme (Gelişmiş & Akıllı Eşleşme)
         col_index_map = {}
         for cat_name in category_counts.keys():
             cat_strict = normalize_text_strict(cat_name)
             cat_norm = normalize_text(cat_name)
             
             matched_idx = None
-            # 1. Tam Eşleşme (Strict)
+            
+            # 1. Aşama: Birebir Tam Eşleşme
             for idx, h in enumerate(target_headers):
                 if cat_strict == normalize_text_strict(h):
                     matched_idx = idx
                     break
             
-            # 2. İçerme Kontrolü
+            # 2. Aşama: Tam Kelime İçerme Kontrolü
             if matched_idx is None:
                 for idx, h in enumerate(target_headers):
-                    h_strict = normalize_text_strict(h)
-                    if cat_strict in h_strict or h_strict in cat_strict:
+                    h_norm = normalize_text(h)
+                    if cat_norm in h_norm or h_norm in cat_norm:
                         matched_idx = idx
                         break
 
-            # 3. Kelime Kökü Kontrolü (ENG/POR/ESP İçin Esnek)
+            # 3. Aşama: Anahtar Kelime Kökü (Mission, Check, Error vb.)
             if matched_idx is None:
-                cat_words = set(cat_norm.split())
                 for idx, h in enumerate(target_headers):
-                    h_words = set(normalize_text(h).split())
-                    if cat_words and h_words and cat_words.intersection(h_words):
-                        matched_idx = idx
+                    h_strict = normalize_text_strict(h)
+                    # Sadece en önemli anahtar kelimeler üzerinden esnetiyoruz
+                    for key in ["mission", "check", "error", "bug", "pass", "general"]:
+                        if key in cat_strict and key in h_strict:
+                            matched_idx = idx
+                            break
+                    if matched_idx is not None:
                         break
 
             if matched_idx is not None:
                 col_index_map[cat_name] = matched_idx
+                self.log(f"🎯 Sütun Eşleşti: '{cat_name}' ➔ Sütun Index {matched_idx + 1} ('{target_headers[matched_idx]}')")
 
         target_users = []
         for row_idx, row in enumerate(target_rows[1:], start=2):
