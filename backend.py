@@ -48,13 +48,12 @@ class QAReportWorker:
 
     def connect(self):
         if isinstance(self.creds_input, dict):
-            creds = Credentials.from_service_account_info(creds_input, scopes=SCOPES)
+            creds = Credentials.from_service_account_info(self.creds_input, scopes=SCOPES)
         else:
             creds = Credentials.from_service_account_file(self.creds_input, scopes=SCOPES)
         return gspread.authorize(creds)
 
     def parse_date(self, date_val):
-        """Timestamp çözücü"""
         if not date_val:
             return None
         date_str = str(date_val).strip()
@@ -72,26 +71,22 @@ class QAReportWorker:
         return None
 
     def get_target_worksheet(self, report_wb):
-        """Hedef sekme eşleştirici"""
         all_worksheets = report_wb.worksheets()
         
         target_lang = self.selected_lang.lower().strip()
         target_month = self.selected_month_str.lower().strip()
         target_year = str(self.selected_year).strip()
 
-        # 1. Tam Eşleşme (Örn: "ENG Temmuz 2026")
         for ws in all_worksheets:
             t_lower = ws.title.lower().strip()
             if target_lang in t_lower and target_month in t_lower and target_year in t_lower:
                 return ws
 
-        # 2. Dil + Ay (Örn: "ENG Temmuz")
         for ws in all_worksheets:
             t_lower = ws.title.lower().strip()
             if target_lang in t_lower and target_month in t_lower:
                 return ws
 
-        # 3. Sadece Dil sekmesi (Örn: "ENG")
         for ws in all_worksheets:
             t_lower = ws.title.lower().strip()
             if target_lang in t_lower:
@@ -123,52 +118,45 @@ class QAReportWorker:
         headers = [str(h).strip().lower() for h in raw_source_rows[0]]
         data_rows = raw_source_rows[1:]
 
-        # Tarih ve Kullanıcı Sütunlarının İndekslerini Belirle
-        date_col_idx = 0  # Zaman damgası
+        date_col_idx = 0
         user_col_idx = -1
 
-        # Öncellikli Kullanıcı Adı Sütunları
         for idx, h in enumerate(headers):
             if any(u in h for u in ["name-surname", "name", "surname", "ad soyad", "kullanıcı", "user"]):
                 user_col_idx = idx
                 break
 
         if user_col_idx == -1:
-            user_col_idx = 1  # Bulunamazsa varsayılan 2. sütun ('Name-Surname')
+            user_col_idx = 1
 
         self.log(f"Kullanıcı Adı Sütunu: Index {user_col_idx} ('{raw_source_rows[0][user_col_idx]}')")
         self.progress(50)
 
         user_counts = Counter()
         matched_rows_count = 0
-        fallback_month_counts = Counter()  # Yıl tutmazsa sadece Ay ile eşleştirme için
+        fallback_month_counts = Counter()
 
         for row_vals in data_rows:
             if not any(row_vals):
                 continue
 
-            # Kullanıcı adını al
             user_name = "Bilinmeyen Kullanıcı"
             if user_col_idx < len(row_vals):
                 val = str(row_vals[user_col_idx]).strip()
                 if val:
                     user_name = val
 
-            # Tarih Kontrolü
             if date_col_idx < len(row_vals):
                 date_val = row_vals[date_col_idx]
                 dt = self.parse_date(date_val)
                 
                 if dt:
-                    # Tam Ay ve Yıl Eşleşmesi
                     if dt.year == self.selected_year and dt.month == self.selected_month_num:
                         matched_rows_count += 1
                         user_counts[user_name] += 1
-                    # Yıl farklı olsa bile seçilen Ay eşleşmesi (Yedek)
                     elif dt.month == self.selected_month_num:
                         fallback_month_counts[user_name] += 1
 
-        # Eğer seçilen yıl ve ay eşleşmesi bulunduysa onu kullan, yoksa sadece ay eşleşmesini kullan
         if matched_rows_count == 0 and fallback_month_counts:
             self.log(f"ℹ️ {self.selected_year} yılına ait veri bulunamadı, fakat kaynak tabloda {self.selected_month_str} ayına ait kayıtlar bulundu. Sadece Ay bazlı hesaplama yapılıyor.")
             user_counts = fallback_month_counts
@@ -181,12 +169,10 @@ class QAReportWorker:
             self.log(f"⚠️ Seçilen {self.selected_month_str} ayına ait hiçbir kayıt bulunamadı.")
             return
 
-        # Kullanıcı Rapor Sayılarını Hazırla
         summary_rows = [[user, count] for user, count in user_counts.items()]
 
         self.log(f"Hesaplandı: {matched_rows_count} rapor kaydı incelendi, {len(summary_rows)} kullanıcının sayıları aktarılıyor...")
 
-        # Hedef Sekmeyi Güncelle
         report_sheet.clear()
         header_row = ["Kullanıcı Adı / QA (Name-Surname)", f"Rapor Sayısı ({self.selected_month_str} {self.selected_year})"]
         all_data_to_write = [header_row] + summary_rows
