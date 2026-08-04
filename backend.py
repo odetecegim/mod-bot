@@ -19,7 +19,6 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive"
 ]
 
-# Türkçe Ay İsimleri Haritası
 MONTH_MAP = {
     "ocak": 1, "subat": 2, "mart": 3, "nisan": 4, "mayis": 5, "haziran": 6,
     "temmuz": 7, "agustos": 8, "eylul": 9, "ekim": 10, "kasim": 11, "aralik": 12
@@ -41,11 +40,10 @@ def normalize_text(text):
     return " ".join(text.split())
 
 def parse_row_date(date_str):
-    """Satırdaki Zaman Damgasından Ay ve Yıl Çıkarır"""
+    """Satırdaki Zaman Damgasından (Örn: 03.07.2026 veya 2026-07-03) Ay ve Yılı Çıkarır"""
     if not date_str:
         return None, None
     try:
-        # DD.MM.YYYY HH:MM:SS veya YYYY-MM-DD vb. kalıpları eşleştir
         match = re.search(r'(\d{1,4})[\./-](\d{1,2})[\./-](\d{1,4})', str(date_str))
         if match:
             g1, g2, g3 = match.groups()
@@ -74,6 +72,19 @@ def safe_batch_update(sheet, updates, log_func, batch_size=25):
                 else:
                     log_func(f"❌ Güncelleme Hatası: {str(e)}")
                     raise e
+
+def get_available_spreadsheets(creds_input):
+    try:
+        if isinstance(creds_input, dict):
+            creds = Credentials.from_service_account_info(creds_input, scopes=SCOPES)
+        else:
+            creds = Credentials.from_service_account_file(creds_input, scopes=SCOPES)
+        client = gspread.authorize(creds)
+        files = client.list_spreadsheet_files()
+        all_sheets = {f['name']: f['id'] for f in files if f.get('name')}
+        return {"all": all_sheets, "source": all_sheets, "report": all_sheets}
+    except Exception as e:
+        return {"error": str(e), "all": {}, "source": {}, "report": {}}
 
 # ==========================================
 # 🧠 HARİTALAMA MOTORU
@@ -166,7 +177,7 @@ class QAReportWorker:
         source_wb = client.open_by_key(self.source_id)
         report_wb = client.open_by_key(self.report_id)
         
-        # 🎯 1. KESİN YIL VE AY MATCH (Örn: "POR TEMMUZ 2026")
+        # 🎯 KESİN SEKME EŞLEŞTİRME: "POR TEMMUZ 2026"
         target_sheet = None
         target_lang = normalize_text(self.selected_lang)
         target_month = normalize_text(self.selected_month_str)
@@ -179,7 +190,7 @@ class QAReportWorker:
                 break
 
         if not target_sheet:
-            self.log(f"❌ HATA: [{self.selected_lang} {self.selected_month_str} {self.selected_year}] adında hedef sekme bulunamadı!")
+            self.log(f"❌ HATA: Hedef tabloda [{self.selected_lang} {self.selected_month_str} {self.selected_year}] isminde bir sekme bulunamadı!")
             self.progress(100)
             return
 
@@ -215,22 +226,21 @@ class QAReportWorker:
                 continue
 
             counts = Counter()
-            filtered_rows_count = 0
+            filtered_count = 0
 
             for row in raw_rows[1:]:
                 if not row:
                     continue
 
-                # 🗓️ TARİH FİLTRESİ CHECK (Zaman damgası 0. Sütundadır)
+                # 🗓️ TARİH KONTROLÜ (Sadece Temmuz 2026 satırları alınır)
                 row_date_str = str(row[0]).strip() if len(row) > 0 else ""
                 row_month, row_year = parse_row_date(row_date_str)
 
-                # Yalnızca seçilen ay ve yıl verisi işlenir
                 if row_month and row_year:
                     if row_month != self.target_month_num or row_year != self.selected_year:
-                        continue # Seçilen döneme uymayan veriyi atla
-                
-                filtered_rows_count += 1
+                        continue # Seçilen ay ve yıla uymuyorsa atla
+
+                filtered_count += 1
                 name_b = str(row[1]).strip() if len(row) > 1 else ""
                 nick_c = str(row[2]).strip() if len(row) > 2 else ""
 
@@ -240,7 +250,7 @@ class QAReportWorker:
                     if name_b and name_b != user_key:
                         counts[name_b] += 1
 
-            self.log(f"   └─ 📅 {self.selected_month_str} {self.selected_year} tarihli işlenebilir satır sayısı: {filtered_rows_count}")
+            self.log(f"   └─ 📅 {self.selected_month_str} {self.selected_year} dönemine ait {filtered_count} satır aktarıma alındı.")
 
             if mapped_header not in category_counts:
                 category_counts[mapped_header] = Counter()
@@ -248,7 +258,7 @@ class QAReportWorker:
 
         self.progress(70)
 
-        # HEDEF KULLANICI LİSTESİ VE HÜCRE GÜNCELLEMELERİ
+        # HEDEF KULLANICI EŞLEŞTİRME
         target_users = []
         for row_idx, row in enumerate(target_rows[1:], start=2):
             if not row:
@@ -292,7 +302,7 @@ class QAReportWorker:
             self.log(f"✍️ Veriler Google Sheets [{target_sheet.title}] sekmesine yazılıyor... ({len(cell_updates)} hücre)")
             safe_batch_update(target_sheet, cell_updates, self.log)
             self.progress(100)
-            self.log("✅ İŞLEM BAŞARILI! Yalnızca Temmuz 2026 verileri tabloya aktarıldı.")
+            self.log("✅ İŞLEM BAŞARILI! Sadece Temmuz 2026 verileri aktarıldı.")
         else:
             self.progress(100)
-            self.log("⚠️ Seçilen döneme (Temmuz 2026) uygun eşleşen veri bulunamadı.")
+            self.log("⚠️ Eşleşen kullanıcı/tarih verisi bulunamadı.")
