@@ -12,6 +12,13 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
+# Rerun uyumluluk kontrolü
+def safe_rerun():
+    if hasattr(st, "rerun"):
+        st.rerun()
+    else:
+        st.experimental_rerun()
+
 # --- ŞİFRE VE OTURUM KONTROLÜ (ZULA TEŞKİLAT TEMASI) ---
 def login_screen():
     st.markdown("""
@@ -176,7 +183,7 @@ def login_screen():
             admin_pass = st.secrets.get("ADMIN_PASSWORD", "akademi2026")
             if password_input == admin_pass:
                 st.session_state["authenticated"] = True
-                st.rerun()
+                safe_rerun()
             else:
                 st.error("❌ Yetkisiz Giriş! Şifre Hatalı.")
 
@@ -191,14 +198,14 @@ if not st.session_state["authenticated"]:
     st.stop()
 
 # ==============================================================================
-# === GİRİŞ YAPILDISAN SONRA GÖRÜNECEK ANA PANEL ===
+# === GİRİŞ YAPILDIKTAN SONRA GÖRÜNECEK ANA PANEL ===
 # ==============================================================================
 
 col_title, col_logout = st.columns([4, 1])
 with col_logout:
     if st.button("🚪 Çıkış Yap"):
         st.session_state["authenticated"] = False
-        st.rerun()
+        safe_rerun()
 
 st.title("📊 QA Görev Raporlama Paneli")
 st.caption("Google Sheets verilerini seçilen Ay ve Yıl'a göre otomatik eşleştirin ve güncelleyin.")
@@ -221,10 +228,10 @@ def get_credentials():
                 creds = dict(sec)
 
             if "private_key" in creds:
-                pk = str(creds["private_key"])
-                pk = pk.replace("\\n", "\n").strip()
+                pk = str(creds["private_key"]).strip()
                 if pk.startswith('"') and pk.endswith('"'):
                     pk = pk[1:-1]
+                pk = pk.replace("\\n", "\n")
                 creds["private_key"] = pk
                 
             return creds
@@ -291,7 +298,8 @@ if submit_button:
 
     def log_callback(msg):
         logs_list.append(f"> {msg}")
-        log_box.code("\n".join(logs_list), language="bash")
+        # Son 30 satırı göstererek arayüz kasmasını engelle
+        log_box.code("\n".join(logs_list[-30:]), language="bash")
 
     def progress_callback(val):
         progress_bar.progress(val)
