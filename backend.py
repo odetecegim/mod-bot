@@ -97,11 +97,12 @@ def get_available_spreadsheets(creds_input):
         return {"error": str(e), "all": {}, "source": {}, "report": {}}
 
 # ==========================================
-# 🌐 DİL BAĞIMSIZ HASSAS HARİTALAMA (HANDLER)
+# 🌐 TÜM DİLLER İÇİN DOĞRU KATEGORİ HARİTALARI
 # ==========================================
 
-class UniversalLanguageHandler:
+class BaseLanguageHandler:
     def is_test_sheet(self, norm_title):
+        # 0 Kul. TESTİ ve diğer test sekmelerini eler
         return any(k in norm_title for k in ["0kullanici", "0kul", "testedenovo", "pruebadeusuario", "test"])
 
     def parse_date(self, date_val):
@@ -115,29 +116,68 @@ class UniversalLanguageHandler:
                 continue
         return None
 
+class PORLanguageHandler(BaseLanguageHandler):
     def map_category(self, ws_title):
         norm = normalize_text_strict(ws_title)
-        
-        # Test Sekmelerini pas geç
         if self.is_test_sheet(norm):
             return None
+        if any(k in norm for k in ["cartaodemissao", "missao", "diaria"]):
+            return "Zula Pass"
+        elif any(k in norm for k in ["verificacaogeral", "geral"]):
+            return "Genel"
+        elif any(k in norm for k in ["relatoriodeerros", "erros", "error"]):
+            return "Error Reporting"
+        return re.sub(r'\(.*?\)', '', ws_title).strip()
 
-        # 1. Görev Kartı / Zula Pass / Mission Card Grubu -> 'ZULA_PASS_KEY'
-        if any(k in norm for k in ["missioncard", "mission", "zulapass", "gkarti", "gunluk", "cartaodemissao", "tarjetademision"]):
-            return "ZULA_PASS_KEY"
+class TRLanguageHandler(BaseLanguageHandler):
+    def map_category(self, ws_title):
+        norm = normalize_text_strict(ws_title)
+        if self.is_test_sheet(norm):
+            return None
+        if any(k in norm for k in ["zulapass", "gunluk", "gkarti"]):
+            return "Zula Pass"
+        elif any(k in norm for k in ["genelcheck", "genel"]):
+            return "Genel"
+        elif any(k in norm for k in ["errorreporting", "hata", "error"]):
+            return "Error Reporting"
+        return re.sub(r'\(.*?\)', '', ws_title).strip()
 
-        # 2. Genel Check Grubu -> 'GENEL_CHECK_KEY'
-        if any(k in norm for k in ["generalcheck", "general", "genelcheck", "genel", "verificacaogeral", "revisiongeneral"]):
-            return "GENEL_CHECK_KEY"
+class ESPLanguageHandler(BaseLanguageHandler):
+    def map_category(self, ws_title):
+        norm = normalize_text_strict(ws_title)
+        if self.is_test_sheet(norm):
+            return None
+        if any(k in norm for k in ["tarjetademision", "mision", "diaria"]):
+            return "Zula Pass"
+        elif any(k in norm for k in ["revisiongeneral", "general"]):
+            return "Genel"
+        elif any(k in norm for k in ["reportedeerrores", "errores", "error"]):
+            return "Error Reporting"
+        return re.sub(r'\(.*?\)', '', ws_title).strip()
 
-        # 3. Hata Raporlama / Error Reporting Grubu -> 'ERROR_KEY'
-        if any(k in norm for k in ["errorreporting", "error", "bug", "hata", "relatoriodeerros", "reportedeerrores"]):
-            return "ERROR_KEY"
-
+class ENGLanguageHandler(BaseLanguageHandler):
+    def map_category(self, ws_title):
+        norm = normalize_text_strict(ws_title)
+        if self.is_test_sheet(norm):
+            return None
+        if any(k in norm for k in ["missioncard", "mission"]):
+            return "Zula Pass"
+        elif any(k in norm for k in ["generalcheck", "general"]):
+            return "Genel"
+        elif any(k in norm for k in ["errorreporting", "error", "bug"]):
+            return "Error Reporting"
         return re.sub(r'\(.*?\)', '', ws_title).strip()
 
 def get_language_handler(lang_code):
-    return UniversalLanguageHandler()
+    lang = str(lang_code).upper().strip()
+    if "POR" in lang:
+        return PORLanguageHandler()
+    elif "ESP" in lang:
+        return ESPLanguageHandler()
+    elif "ENG" in lang or "EN" in lang:
+        return ENGLanguageHandler()
+    else:
+        return TRLanguageHandler()
 
 # ==========================================
 # 🚀 QA REPORT WORKER (ANA İŞLEYİCİ)
@@ -239,7 +279,7 @@ class QAReportWorker:
         return counts
 
     def process(self):
-        self.log(f"İşlem Başlatıldı | Dil: [{self.selected_lang}] | Dönem: [{self.selected_month_str} {self.selected_year}]")
+        self.log(f"İşlem Modülü: [{self.handler.__class__.__name__}] | Dil: [{self.selected_lang}] | Dönem: [{self.selected_month_str} {self.selected_year}]")
         self.progress(10)
         client = self.connect()
 
@@ -255,18 +295,18 @@ class QAReportWorker:
 
         for ws in source_worksheets:
             ws_title = ws.title.strip()
-            target_col_key = self.handler.map_category(ws_title)
+            target_col_name = self.handler.map_category(ws_title)
 
-            if not target_col_key:
+            if not target_col_name:
                 self.log(f"🚫 Pas geçildi (Test Sekmesi): [{ws_title}]")
                 continue
 
-            self.log(f"📊 Sekme Okunuyor: [{ws_title}] ➔ Anahtarlanıyor...")
+            self.log(f"📊 Sekme Okunuyor: [{ws_title}] ➔ Hedef Sütun: '{target_col_name}'")
             user_counts = self.count_user_reports_in_sheet(ws)
             
-            if target_col_key not in category_counts:
-                category_counts[target_col_key] = Counter()
-            category_counts[target_col_key].update(user_counts)
+            if target_col_name not in category_counts:
+                category_counts[target_col_name] = Counter()
+            category_counts[target_col_name].update(user_counts)
 
         self.progress(60)
 
@@ -286,43 +326,33 @@ class QAReportWorker:
                 user_col_in_target = idx
                 break
 
-        # SÜTUN BAŞLIKLARINI AKILLI DİL EŞLEŞTİRME
+        # Sütun Eşleştirme (Birebir & Esnek Arama)
         col_index_map = {}
-        
-        for cat_key in category_counts.keys():
+        for cat_name in category_counts.keys():
+            cat_strict = normalize_text_strict(cat_name)
+            cat_norm = normalize_text(cat_name)
+            
             matched_idx = None
-
+            
+            # 1. Aşama: Tam Birebir Eşleşme
             for idx, h in enumerate(target_headers):
-                h_norm = normalize_text_strict(h)
-                
-                # Zula Pass / Mission Card Eşleştirme
-                if cat_key == "ZULA_PASS_KEY":
-                    if any(k in h_norm for k in ["zulapass", "pass", "mission", "card", "gkart"]):
-                        matched_idx = idx
-                        break
-
-                # Genel Check Eşleştirme
-                elif cat_key == "GENEL_CHECK_KEY":
-                    if any(k in h_norm for k in ["genel", "general", "check", "verificacao", "revision"]):
-                        matched_idx = idx
-                        break
-
-                # Error Reporting Eşleştirme
-                elif cat_key == "ERROR_KEY":
-                    if any(k in h_norm for k in ["error", "bug", "hata", "relatorio", "reporte"]):
-                        matched_idx = idx
-                        break
-                
-                # Standart Başlık Eşleşmesi
-                elif cat_key.lower() in h_norm:
+                if cat_strict == normalize_text_strict(h):
                     matched_idx = idx
                     break
+            
+            # 2. Aşama: Kelime Bazlı Esnek Eşleşme
+            if matched_idx is None:
+                for idx, h in enumerate(target_headers):
+                    h_norm = normalize_text(h)
+                    if cat_norm in h_norm or h_norm in cat_norm:
+                        matched_idx = idx
+                        break
 
             if matched_idx is not None:
-                col_index_map[cat_key] = matched_idx
-                self.log(f"🎯 Sütun Başarıyla Bulundu: Sütun {matched_idx + 1} -> ({target_headers[matched_idx]})")
+                col_index_map[cat_name] = matched_idx
+                self.log(f"🎯 Sütun Başarıyla Eşleşti: '{cat_name}' ➔ Sütun {matched_idx + 1} ({target_headers[matched_idx]})")
             else:
-                self.log(f"❌ UYARI: Hedef tabloda bu kategoriye ait sütun bulunamadı: '{cat_key}'")
+                self.log(f"❌ UYARI: '{cat_name}' ismi ana tablodaki başlıklar arasında bulunamadı!")
 
         target_users = []
         for row_idx, row in enumerate(target_rows[1:], start=2):
@@ -333,11 +363,11 @@ class QAReportWorker:
 
         cell_updates = []
         
-        for cat_key, u_counts in category_counts.items():
-            if cat_key not in col_index_map:
+        for cat_name, u_counts in category_counts.items():
+            if cat_name not in col_index_map:
                 continue
                 
-            target_c_idx = col_index_map[cat_key]
+            target_c_idx = col_index_map[cat_name]
             
             for row_idx, t_name in target_users:
                 total_score = 0
@@ -359,235 +389,7 @@ class QAReportWorker:
             self.log(f"Veriler [{target_sheet.title}] sekmesine yazılıyor... ({len(cell_updates)} hücre)")
             safe_batch_update(target_sheet, cell_updates, self.log)
             self.progress(100)
-            self.log(f"✅ İŞLEM TAMAMLANDI! Tüm sütunlar başarıyla işlendi.")
+            self.log(f"✅ İŞLEM BAŞARILI! [{self.selected_lang}] dili tüm sütunlar için başarıyla aktarıldı.")
         else:
             self.progress(100)
-            self.log(f"⚠️ Seçilen tarih/dil kriterine uygun aktarılacak veri bulunamadı.")    except Exception as e:
-        return {"error": str(e), "all": {}, "source": {}, "report": {}}
-
-# ==========================================
-# 🧠 AI & KURAL BAZLI HARİTALAYICI
-# ==========================================
-
-def get_sheet_column_mapping(source_titles, target_headers, log_func, api_key=None):
-    final_key = api_key or os.getenv("OPENAI_API_KEY")
-    
-    if HAS_OPENAI and final_key:
-        try:
-            client = openai.OpenAI(api_key=final_key)
-            prompt = f"""
-            Kaynak Sekme Adları: {source_sheets_list}
-            Hedef Tablo Başlıkları: {target_headers}
-
-            GÖREV:
-            1. '0 Kullanıcı', 'Teste', 'OLD', 'Kopyası' içeren test sekmelerini eler (null yap).
-            2. Sekme isimlerini hedef tablodaki EXACT (tam) sütun metniyle eşleştir.
-               Örnek: 'Cartão De Missão (günlük)' -> 'G. Kartı (Günlük)'
-               Örnek: 'Verificação Geral (genel)' -> 'Genel Check'
-               Örnek: 'Relatório de erros' -> 'Hata bildirimi'
-
-            SADECE JSON DÖNDÜR:
-            {{ "Sekme Adı": "Hedef Tablo Başlığı" }}
-            """
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
-                temperature=0.0
-            )
-            res = json.loads(response.choices[0].message.content)
-            log_func(f"🤖 AI Eşleşme Haritası: {res}")
-            return res
-        except Exception as e:
-            log_func(f"⚠️ AI Analiz Hatası ({str(e)}), kural bazlı haritalama çalıştırılıyor.")
-
-    # KURAL BAZLI HARİTALAMA (Görsellerdeki Tablo Yapısına Özel)
-    mapping = {}
-    for st in source_titles:
-        st_norm = normalize_text(st)
-        
-        # Test Sekmelerini Pas Geç
-        if any(k in st_norm for k in ["0 kul", "teste de novo", "old", "kopyasi", "copy"]):
-            mapping[st] = None
-            continue
-        
-        matched_header = None
-        for th in target_headers:
-            th_norm = normalize_text(th)
-            
-            # Mission Card / Cartão De Missão -> G. Kartı (Günlük)
-            if any(k in st_norm for k in ["cartao", "missao", "card", "gunluk"]) and any(k in th_norm for k in ["g karti", "karti", "gunluk", "mission"]):
-                matched_header = th
-                break
-            # Verificação Geral -> Genel Check
-            elif any(k in st_norm for k in ["verificacao", "geral", "genel", "check"]) and any(k in th_norm for k in ["genel", "check", "geral"]):
-                matched_header = th
-                break
-            # Relatório de erros -> Hata bildirimi
-            elif any(k in st_norm for k in ["relatorio", "erro", "hata", "bug"]) and any(k in th_norm for k in ["hata", "bildirimi", "error", "bug"]):
-                matched_header = th
-                break
-
-        mapping[st] = matched_header
-
-    return mapping
-
-# ==========================================
-# 🚀 QA REPORT WORKER
-# ==========================================
-
-class QAReportWorker:
-    def __init__(self, creds_input, source_id, report_id, selected_lang, selected_year, selected_month, log_callback, progress_callback, openai_api_key=None):
-        self.creds_input = creds_input
-        self.source_id = source_id
-        self.report_id = report_id
-        self.selected_lang = selected_lang.upper().strip()
-        self.selected_year = int(selected_year)
-        self.selected_month_str = selected_month
-        self.log = log_callback
-        self.progress = progress_callback
-        self.openai_api_key = openai_api_key
-
-    def connect(self):
-        if isinstance(self.creds_input, dict):
-            creds = Credentials.from_service_account_info(self.creds_input, scopes=SCOPES)
-        else:
-            creds = Credentials.from_service_account_file(self.creds_input, scopes=SCOPES)
-        return gspread.authorize(creds)
-
-    def process(self):
-        self.log(f"🧠 İşlem Başlatıldı | Dil: [{self.selected_lang}] | Dönem: [{self.selected_month_str} {self.selected_year}]")
-        self.progress(10)
-        client = self.connect()
-
-        source_wb = client.open_by_key(self.source_id)
-        report_wb = client.open_by_key(self.report_id)
-        
-        # 1. HEDEF SEKMEYİ BUL ("POR TEMMUZ 2026")
-        target_sheet = None
-        target_lang = normalize_text(self.selected_lang)
-        target_month = normalize_text(self.selected_month_str)
-        target_year = str(self.selected_year)
-
-        for ws in report_wb.worksheets():
-            t_norm = normalize_text(ws.title)
-            if target_lang in t_norm and target_month in t_norm:
-                target_sheet = ws
-                break
-
-        if not target_sheet:
-            for ws in report_wb.worksheets():
-                if target_lang in normalize_text(ws.title):
-                    target_sheet = ws
-                    break
-
-        if not target_sheet:
-            target_sheet = report_wb.sheet1
-
-        self.log(f"🎯 Hedef Sekme Bulundu: [{target_sheet.title}]")
-        self.progress(20)
-
-        target_rows = target_sheet.get_all_values()
-        if not target_rows:
-            self.log("⚠️ Ana tabloda veri bulunamadı!")
-            self.progress(100)
-            return
-
-        # 2. HEDEF BAŞLIKLARI AL (1. Satır: Member ID, Ad Soyad, Nick, G. Kartı...)
-        target_headers = [str(h).strip() for h in target_rows[0]]
-        source_worksheets = source_wb.worksheets()
-        source_titles = [ws.title.strip() for ws in source_worksheets]
-
-        # 3. HARİTALAMA YAP
-        ai_map = get_sheet_column_mapping(source_titles, target_headers, self.log, self.openai_api_key)
-        self.progress(40)
-
-        category_counts = {}
-
-        for ws in source_worksheets:
-            ws_title = ws.title.strip()
-            mapped_header = ai_map.get(ws_title)
-
-            if not mapped_header:
-                self.log(f"🚫 Es geçildi (Test/Eşleşmeyen): [{ws_title}]")
-                continue
-
-            self.log(f"📊 Sekme Okunuyor: [{ws_title}] ➔ Hedef Sütun: '{mapped_header}'")
-            raw_rows = ws.get_all_values()
-            if len(raw_rows) <= 1:
-                continue
-
-            headers = [normalize_text(h) for h in raw_rows[0]]
-            
-            # Sorumlu kullanıcı adını B (Nome) ve C (Nick) sütunlarından topla
-            counts = Counter()
-            for row in raw_rows[1:]:
-                if not row:
-                    continue
-                
-                # B ve C sütunlarındaki değerleri al
-                name_b = str(row[1]).strip() if len(row) > 1 else ""
-                nick_c = str(row[2]).strip() if len(row) > 2 else ""
-
-                user_key = nick_c if nick_c else name_b
-                if user_key and not any(tot in user_key.lower() for tot in ["toplam", "total", "zaman"]):
-                    counts[user_key] += 1
-                    if name_b and name_b != user_key:
-                        counts[name_b] += 1
-
-            if mapped_header not in category_counts:
-                category_counts[mapped_header] = Counter()
-            category_counts[mapped_header].update(counts)
-
-        self.progress(70)
-
-        # 4. HEDEF TABLODAKİ KULLANICI LİSTESİNİ ÇIKAR (Ad Soyad ve Nick)
-        target_users = []
-        for row_idx, row in enumerate(target_rows[1:], start=2):
-            if not row:
-                continue
-            ad_soyad = str(row[1]).strip() if len(row) > 1 else ""
-            nick = str(row[2]).strip() if len(row) > 2 else ""
-            if ad_soyad or nick:
-                target_users.append((row_idx, ad_soyad, nick))
-
-        # 5. HÜCRE GÜNCELLEMELERİNİ HAZIRLA
-        cell_updates = []
-        for target_col_header, u_counts in category_counts.items():
-            if target_col_header not in target_headers:
-                continue
-            
-            col_idx = target_headers.index(target_col_header)
-            
-            for row_idx, ad_soyad, nick in target_users:
-                score = 0
-                norm_ad = normalize_text(ad_soyad)
-                norm_nick = normalize_text(nick)
-
-                for src_name, count in u_counts.items():
-                    norm_src = normalize_text(src_name)
-                    if not norm_src:
-                        continue
-                    
-                    if (norm_nick and (norm_nick == norm_src or norm_nick in norm_src or norm_src in norm_nick)) or \
-                       (norm_ad and (norm_ad == norm_src or norm_ad in norm_src or norm_src in norm_ad)):
-                        score += count
-
-                if score > 0:
-                    a1_cell = gspread.utils.rowcol_to_a1(row_idx, col_idx + 1)
-                    cell_updates.append({
-                        'range': f"{a1_cell}:{a1_cell}",
-                        'values': [[int(score)]]
-                    })
-
-        self.progress(90)
-
-        # 6. VERİLERİ YAZ
-        if cell_updates:
-            self.log(f"✍️ Veriler Google Sheets [{target_sheet.title}] sekmesine yazılıyor... ({len(cell_updates)} hücre)")
-            safe_batch_update(target_sheet, cell_updates, self.log)
-            self.progress(100)
-            self.log("✅ İŞLEM BAŞARILI! Tablo kontrol edilip veriler aktarıldı.")
-        else:
-            self.progress(100)
-            self.log("⚠️ Eşleşen kullanıcı verisi bulunamadı.")
+            self.log(f"⚠️ Seçilen kriterlere uygun aktarılacak veri bulunamadı.")
