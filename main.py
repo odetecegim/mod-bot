@@ -34,20 +34,21 @@ def check_session_timeout():
 
 check_session_timeout()
 
-# --- YENİ MODERN GİRİŞ ARAYÜZÜ (1920x1080 ORİJİNAL EN-BOY KORUMALI) ---
+# --- ZULA OYUNCU REHBERİ TEMALI GİRİŞ ARAYÜZÜ ---
 def login_screen():
-    bg_image_url = "https://i.ibb.co/6crb7b2Z/image.jpg"
+    # Zula Oyuncu Rehberi Resmi HD Arka Plan Görseli
+    bg_image_url = "https://images4.alphacoders.com/122/thumb-1920-1228871.jpg"
 
     st.markdown(f"""
         <style>
-            /* 1920x1080 Arka Plan Görseli - Oranları Bozmadan Tam Ekran Kaplama */
+            /* Zula Arka Plan Görseli */
             .stApp {{
-                background: linear-gradient(rgba(10, 10, 15, 0.65), rgba(10, 10, 15, 0.75)),
+                background: linear-gradient(rgba(10, 10, 15, 0.65), rgba(10, 10, 15, 0.78)),
                             url('{bg_image_url}') no-repeat center center fixed !important;
-                background-size: cover !important; /* Görseli sünmeden, oranını bozarak ekranı tam kaplar */
+                background-size: cover !important;
             }}
 
-            /* Sayfa Alanını ve Ekran Yüksekliğini Dikey Ortala */
+            /* Dikey ve Yatay Tam Ortalama */
             html, body, [data-testid="stAppViewContainer"] {{
                 height: 100vh;
                 margin: 0;
@@ -61,13 +62,13 @@ def login_screen():
                 height: 100vh;
                 display: flex;
                 flex-direction: column;
-                justify-content: center; /* Tam Dikey Ortalama */
+                justify-content: center;
             }}
 
             /* Rozet Alanı */
             .badge-box {{
-                background: rgba(239, 68, 68, 0.15);
-                border: 1px solid rgba(239, 68, 68, 0.4);
+                background: rgba(239, 68, 68, 0.18);
+                border: 1px solid rgba(239, 68, 68, 0.45);
                 border-radius: 50px;
                 padding: 6px 16px;
                 width: fit-content;
@@ -101,23 +102,23 @@ def login_screen():
                 letter-spacing: -0.5px;
                 margin-bottom: 6px;
                 font-family: 'Inter', system-ui, -apple-system, sans-serif;
-                text-shadow: 0 2px 10px rgba(0,0,0,0.5);
+                text-shadow: 0 2px 10px rgba(0,0,0,0.7);
             }}
             .subtitle-text {{
                 text-align: center;
                 font-size: 13px;
                 color: #cbd5e1;
                 margin-bottom: 1.8rem;
-                text-shadow: 0 1px 5px rgba(0,0,0,0.5);
+                text-shadow: 0 1px 5px rgba(0,0,0,0.7);
             }}
 
             /* Glassmorphism Form Kartı */
             div[data-testid="stForm"] {{
-                background: rgba(18, 18, 28, 0.78) !important;
+                background: rgba(15, 15, 23, 0.82) !important;
                 border: 1px solid rgba(255, 255, 255, 0.15) !important;
                 border-radius: 20px !important;
                 padding: 2.2rem 2rem !important;
-                box-shadow: 0 25px 50px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.15) !important;
+                box-shadow: 0 25px 50px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.15) !important;
                 backdrop-filter: blur(16px);
             }}
 
@@ -130,7 +131,7 @@ def login_screen():
                 margin-bottom: 6px !important;
             }}
             div[data-baseweb="input"] {{
-                background-color: rgba(10, 10, 18, 0.8) !important;
+                background-color: rgba(10, 10, 18, 0.85) !important;
                 border: 1px solid rgba(255, 255, 255, 0.15) !important;
                 border-radius: 12px !important;
                 color: #ffffff !important;
@@ -138,7 +139,7 @@ def login_screen():
             }}
             div[data-baseweb="input"]:focus-within {{
                 border-color: #ef4444 !important;
-                box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.3) !important;
+                box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.35) !important;
             }}
 
             /* Buton Stili */
@@ -151,13 +152,13 @@ def login_screen():
                 font-weight: 700 !important;
                 font-size: 15px !important;
                 letter-spacing: 0.5px !important;
-                box-shadow: 0 8px 20px rgba(239, 68, 68, 0.4) !important;
+                box-shadow: 0 8px 20px rgba(239, 68, 68, 0.45) !important;
                 transition: all 0.2s ease-in-out !important;
                 margin-top: 10px !important;
             }}
             div[data-testid="stFormSubmitButton"] > button:hover {{
                 transform: translateY(-2px);
-                box-shadow: 0 12px 25px rgba(239, 68, 68, 0.6) !important;
+                box-shadow: 0 12px 25px rgba(239, 68, 68, 0.65) !important;
                 background: linear-gradient(135deg, #f87171 0%, #ef4444 100%) !important;
             }}
 
