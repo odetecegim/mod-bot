@@ -76,18 +76,18 @@ def get_sheet_column_mapping(source_titles, target_headers, log_func, api_key=No
         try:
             client = openai.OpenAI(api_key=final_key)
             prompt = f"""
-            Kaynak Sekme Adları: {source_sheets_list}
+            Kaynak Sekme Adları: {source_titles}
             Hedef Tablo Başlıkları: {target_headers}
 
             GÖREV:
             1. '0 Kullanıcı', 'Teste', 'OLD', 'Kopyası' içeren test sekmelerini eler (null yap).
-            2. Sekme isimlerini hedef tablodaki EXACT (tam) sütun metniyle eşleştir.
-               Örnek: 'Cartão De Missão (günlük)' -> 'G. Kartı (Günlük)'
-               Örnek: 'Verificação Geral (genel)' -> 'Genel Check'
-               Örnek: 'Relatório de erros' -> 'Hata bildirimi'
+            2. Sekme isimlerini hedef tablodaki BİREBİR (EXACT) sütun metniyle eşleştir:
+               - 'Cartão De Missão (günlük)' veya benzeri -> 'G. Kartı (Günlük)'
+               - 'Verificação Geral (genel)' veya benzeri -> 'Genel Check'
+               - 'Relatório de erros' veya benzeri -> 'Hata bildirimi'
 
             SADECE JSON DÖNDÜR:
-            {{ "Sekme Adı": "Hedef Tablo Başlığı" }}
+            {{ "Sekme Adı": "Hedef Tablo Başlığı Metni" }}
             """
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
@@ -101,12 +101,11 @@ def get_sheet_column_mapping(source_titles, target_headers, log_func, api_key=No
         except Exception as e:
             log_func(f"⚠️ AI Analiz Hatası ({str(e)}), kural bazlı haritalama çalıştırılıyor.")
 
-    # KURAL BAZLI HARİTALAMA (Görsellerdeki Tablo Yapısına Özel)
     mapping = {}
     for st in source_titles:
         st_norm = normalize_text(st)
         
-        # Test Sekmelerini Pas Geç
+        # Test Sekmelerini Pas Geç (Gereksiz kopyalar ve testler)
         if any(k in st_norm for k in ["0 kul", "teste de novo", "old", "kopyasi", "copy"]):
             mapping[st] = None
             continue
@@ -163,21 +162,32 @@ class QAReportWorker:
         source_wb = client.open_by_key(self.source_id)
         report_wb = client.open_by_key(self.report_id)
         
-        # 1. HEDEF SEKMEYİ BUL ("POR TEMMUZ 2026")
+        # 🎯 1. KESİN YIL VE AY DOĞRULAMALI HEDEF SEKME SEÇİMİ
         target_sheet = None
         target_lang = normalize_text(self.selected_lang)
         target_month = normalize_text(self.selected_month_str)
-        target_year = str(self.selected_year)
+        target_year = str(self.selected_year).strip()
 
+        # Öncelik 1: Hem DİL hem AY hem YIL eşleşen sekme ("POR TEMMUZ 2026")
         for ws in report_wb.worksheets():
             t_norm = normalize_text(ws.title)
-            if target_lang in t_norm and target_month in t_norm:
+            if target_lang in t_norm and target_month in t_norm and target_year in t_norm:
                 target_sheet = ws
                 break
 
+        # Öncelik 2: Bulunamazsa DİL ve YIL eşleşen
         if not target_sheet:
             for ws in report_wb.worksheets():
-                if target_lang in normalize_text(ws.title):
+                t_norm = normalize_text(ws.title)
+                if target_lang in t_norm and target_year in t_norm:
+                    target_sheet = ws
+                    break
+
+        # Öncelik 3: Bulunamazsa DİL ve AY eşleşen
+        if not target_sheet:
+            for ws in report_wb.worksheets():
+                t_norm = normalize_text(ws.title)
+                if target_lang in t_norm and target_month in t_norm:
                     target_sheet = ws
                     break
 
@@ -193,7 +203,7 @@ class QAReportWorker:
             self.progress(100)
             return
 
-        # 2. HEDEF BAŞLIKLARI AL (1. Satır: Member ID, Ad Soyad, Nick, G. Kartı...)
+        # 2. HEDEF BAŞLIKLARI AL
         target_headers = [str(h).strip() for h in target_rows[0]]
         source_worksheets = source_wb.worksheets()
         source_titles = [ws.title.strip() for ws in source_worksheets]
@@ -217,15 +227,11 @@ class QAReportWorker:
             if len(raw_rows) <= 1:
                 continue
 
-            headers = [normalize_text(h) for h in raw_rows[0]]
-            
-            # Sorumlu kullanıcı adını B (Nome) ve C (Nick) sütunlarından topla
             counts = Counter()
             for row in raw_rows[1:]:
                 if not row:
                     continue
                 
-                # B ve C sütunlarındaki değerleri al
                 name_b = str(row[1]).strip() if len(row) > 1 else ""
                 nick_c = str(row[2]).strip() if len(row) > 2 else ""
 
@@ -241,7 +247,7 @@ class QAReportWorker:
 
         self.progress(70)
 
-        # 4. HEDEF TABLODAKİ KULLANICI LİSTESİNİ ÇIKAR (Ad Soyad ve Nick)
+        # 4. HEDEF TABLODAKİ KULLANICI LİSTESİNİ ÇIKAR
         target_users = []
         for row_idx, row in enumerate(target_rows[1:], start=2):
             if not row:
