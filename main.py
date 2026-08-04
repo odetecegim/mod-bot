@@ -1,8 +1,12 @@
 import os
 import json
 import base64
+import time
 import streamlit as st
 from backend import QAReportWorker, get_available_spreadsheets
+
+# 1 Saat = 3600 Saniye
+ONE_HOUR_SECONDS = 3600
 
 # Sayfa Yapılandırması
 st.set_page_config(
@@ -11,6 +15,25 @@ st.set_page_config(
     layout="centered",
     initial_sidebar_state="collapsed"
 )
+
+# --- OTURUM VE ZAMAN AŞIMI YÖNETİMİ ---
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+
+if "login_time" not in st.session_state:
+    st.session_state["login_time"] = None
+
+def check_session_timeout():
+    """1 saatlik zaman aşımını kontrol eder."""
+    if st.session_state["authenticated"] and st.session_state["login_time"] is not None:
+        elapsed = time.time() - st.session_state["login_time"]
+        if elapsed > ONE_HOUR_SECONDS:
+            st.session_state["authenticated"] = False
+            st.session_state["login_time"] = None
+            st.warning("⚠️ Oturum süreniz (1 saat) dolduğu için kilit ekranına yönlendirildiniz.")
+
+check_session_timeout()
+
 # --- ŞİFRE VE OTURUM KONTROLÜ (ZULA TEŞKİLAT TEMASI) ---
 def login_screen():
     st.markdown("""
@@ -141,16 +164,14 @@ def login_screen():
             admin_pass = st.secrets.get("ADMIN_PASSWORD", "akademi2026")
             if password_input == admin_pass:
                 st.session_state["authenticated"] = True
+                st.session_state["login_time"] = time.time()
                 st.rerun()
             else:
                 st.error("❌ Yetkisiz Giriş! Şifre Hatalı.")
 
-    st.markdown('<div class="footer-text">Oturum <span>12 saat</span> boyunca aktif kalır</div>', unsafe_allow_html=True)
+    st.markdown('<div class="footer-text">Oturum <span>1 saat</span> boyunca aktif kalır</div>', unsafe_allow_html=True)
 
-# Oturum Kontrolü
-if "authenticated" not in st.session_state:
-    st.session_state["authenticated"] = False
-
+# Oturum Doğrulama Kontrolü
 if not st.session_state["authenticated"]:
     login_screen()
     st.stop()
@@ -159,10 +180,18 @@ if not st.session_state["authenticated"]:
 # === GİRİŞ YAPILDIKTAN SONRA GÖRÜNECEK ANA PANEL ===
 # ==============================================================================
 
-col_title, col_logout = st.columns([4, 1])
+col_title, col_logout = st.columns([3, 1])
+
+with col_title:
+    # Kalan Süre Hesaplama
+    elapsed_time = time.time() - st.session_state["login_time"]
+    remaining_min = int((ONE_HOUR_SECONDS - elapsed_time) / 60)
+    st.caption(f"⏱️ Oturum Süresi: Kalan ~**{remaining_min} dakika**")
+
 with col_logout:
     if st.button("🚪 Çıkış Yap"):
         st.session_state["authenticated"] = False
+        st.session_state["login_time"] = None
         st.rerun()
 
 st.title("📊 QA Görev Raporlama Paneli")
@@ -171,7 +200,6 @@ st.caption("Google Sheets verilerini seçilen Ay ve Yıl'a göre otomatik eşle�
 # --- GOOGLE CREDENTIALS YÖNETİMİ ---
 @st.cache_resource
 def get_credentials():
-    # Secrets anahtarları hem küçük hem büyük harf kombinasyonuyla taranır
     sec_key = None
     for k in ["gcp_service_account", "GCP_SERVICE_ACCOUNT", "GOOGLE_CREDENTIALS", "google_credentials"]:
         if k in st.secrets:
@@ -214,16 +242,14 @@ if not creds_input:
     st.error("❌ Google bağlantı bilgileri bulunamadı! Lütfen Streamlit Secrets ayarlarınızı kontrol edin.")
     st.stop()
 
-# --- TABLOLARI LİSTELE VE AYRIŞTIR (HATA GİDERİLEN KISIM) ---
+# --- TABLOLARI LİSTELE VE AYRIŞTIR ---
 try:
     sheets_data = get_available_spreadsheets(creds_input)
     
-    # Backend'den 'error' gelip gelmediği kontrolü
     if "error" in sheets_data:
         st.error(f"❌ Google Sheets Bağlantı Hatası: {sheets_data['error']}")
         st.stop()
 
-    # Esnek anahtar alma (all, source veya report fark etmeksizin)
     source_sheets_dict = sheets_data.get("source", sheets_data.get("all", {}))
     report_sheets_dict = sheets_data.get("report", sheets_data.get("all", {}))
     
