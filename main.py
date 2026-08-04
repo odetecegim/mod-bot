@@ -300,12 +300,12 @@ with st.form("qa_form"):
     col3, col4, col5 = st.columns(3)
     
     with col3:
-        selected_lang = st.selectbox("Dil", ["Tümü", "ENG", "ESP", "POR", "TR"])
+        selected_lang = st.selectbox("Dil", [, "ENG", "ESP", "POR",])
     with col4:
         months = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylul", "Ekim", "Kasım", "Aralık"]
         selected_month = st.selectbox("Ay", months, index=6)
     with col5:
-        selected_year = st.selectbox("Yıl", ["2025", "2026", "2027"], index=1)
+        selected_year = st.selectbox("Yıl", ["2026", "2027"], index=1)
 
     submit_button = st.form_submit_button("🚀 Raporu Güncelle", use_container_width=True)
 
