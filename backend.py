@@ -15,9 +15,7 @@ MONTH_MAP = {
 def get_available_spreadsheets(creds_input):
     """
     Drive üzerindeki tüm tabloları getirir.
-    Rapor ve Kaynak tablolarının yerlerini tam tersine çevirir:
-    - Adında 'rapor', 'report', 'relatório' geçenler -> Kaynak Tablo (Source Sheet)
-    - Diğer takip/çalışma tabloları -> Rapor Tablosu (Report Sheet)
+    Rapor ve Kaynak tablolarını ayrıştırır.
     """
     if isinstance(creds_input, dict):
         creds = Credentials.from_service_account_info(creds_input, scopes=SCOPES)
@@ -36,13 +34,11 @@ def get_available_spreadsheets(creds_input):
 
     for name, fid in all_sheets.items():
         name_lower = name.lower()
-        # Yerler değiştirildi: Rapor isimli dosyalar Kaynak Tabloya ekleniyor
         if any(keyword in name_lower for keyword in report_keywords):
             source_sheets[name] = fid
         else:
             report_sheets[name] = fid
 
-    # Güvenlik önlemleri
     if not report_sheets:
         report_sheets = all_sheets.copy()
     if not source_sheets:
@@ -73,29 +69,88 @@ class QAReportWorker:
             creds = Credentials.from_service_account_file(self.creds_input, scopes=SCOPES)
         return gspread.authorize(creds)
 
+    def parse_date(self, date_val):
+        """Tarih formatlarını (DD.MM.YYYY veya YYYY-MM-DD) otomatik çözümleme"""
+        if not date_val:
+            return None
+        date_str = str(date_val).strip()
+        for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y"):
+            try:
+                return datetime.datetime.strptime(date_str, fmt)
+            except ValueError:
+                continue
+        return None
+
     def process(self):
         self.log("Google Sheets servisine bağlanılıyor...")
         self.progress(10)
         client = self.connect()
 
-        self.log("Kaynak ve Rapor tabloları açılıyor...")
+        self.log("Kaynak ve Ana Rapor tabloları açılıyor...")
         self.progress(25)
-        source_sheet = client.open_by_key(self.source_id).sheet1
-        report_sheet = client.open_by_key(self.report_id).sheet1
+        
+        # 1. Kaynak Tabloyu Aç (Verinin Okunacağı Yer)
+        source_wb = client.open_by_key(self.source_id)
+        source_sheet = source_wb.sheet1
 
-        self.log("Veriler okunuyor...")
+        # 2. Ana Rapor Tablosunu Aç (Verinin Yazılacağı Hedef Dosya)
+        report_wb = client.open_by_key(self.report_id)
+        
+        # Eğer Ana Rapor dosyasında seçilen dille eşleşen bir sekme (örn: "ESP" veya "POR") varsa oraya yazar, yoksa 1. sekmeye yazar
+        try:
+            if self.selected_lang != "Tümü" and self.selected_lang in [s.title for s in report_wb.worksheets()]:
+                report_sheet = report_wb.worksheet(self.selected_lang)
+            else:
+                report_sheet = report_wb.sheet1
+        except Exception:
+            report_sheet = report_wb.sheet1
+
+        self.log(f"Kaynak: [{source_wb.title}] ➔ Hedef: [{report_wb.title} / {report_sheet.title}]")
         self.progress(40)
+        
         source_data = source_sheet.get_all_records()
-        report_data = report_sheet.get_all_records()
 
         self.log(f"Filtreler uygulanıyor: Yıl={self.selected_year}, Ay={self.selected_month_str}, Dil={self.selected_lang}")
         self.progress(60)
 
-        processed_count = len(source_data)
-        
-        self.log(f"Toplam {processed_count} kayıt başarıyla işlendi.")
-        self.progress(90)
+        filtered_rows = []
+        for row in source_data:
+            row_lower = {str(k).lower(): v for k, v in row.items()}
+            
+            # Tarih kontrolü
+            date_val = None
+            for key in row_lower:
+                if any(t in key for t in ["tarih", "date", "fecha", "data"]):
+                    date_val = row_lower[key]
+                    break
 
-        self.log("Rapor tablosu güncelleniyor...")
-        self.progress(100)
-        self.log("İşlem başarıyla tamamlandı!")
+            dt = self.parse_date(date_val)
+            if dt:
+                if dt.year != self.selected_year or dt.month != self.selected_month_num:
+                    continue
+
+            # Dil kontrolü
+            if self.selected_lang != "Tümü":
+                lang_val = ""
+                for key in row_lower:
+                    if any(l in key for l in ["dil", "lang", "idioma"]):
+                        lang_val = str(row_lower[key]).upper()
+                        break
+                
+                if lang_val and self.selected_lang not in lang_val:
+                    continue
+
+            filtered_rows.append(list(row.values()))
+
+        self.log(f"Filtreye uygun toplam {len(filtered_rows)} kayıt bulundu.")
+        self.progress(80)
+
+        if filtered_rows:
+            self.log(f"Veriler hedef dosyaya [{report_wb.title}] aktarılıyor...")
+            # Yanlışlıkla kendi içine yazmayı engellemek için doğrudan dış hedef tabloya aktarıyoruz
+            report_sheet.append_rows(filtered_rows)
+            self.progress(100)
+            self.log("✅ İşlem başarıyla tamamlandı! Veriler Ana Rapor dosyasına işlendi.")
+        else:
+            self.progress(100)
+            self.log("⚠️ Seçilen ay/yıl/dil kriterlerine uygun kayıt bulunamadı.")
