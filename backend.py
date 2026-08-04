@@ -71,25 +71,22 @@ class QAReportWorker:
         return None
 
     def get_target_worksheet(self, report_wb):
-        """Seçilen Dile (ENG, ESP, POR vb.) ve Ay/Yıl bilgisine uygun hedef sekemeyi otomatik bulur."""
+        """Seçilen Dile (ESP, ENG, POR vb.) uygun hedef sekmeyi bulur."""
         all_worksheets = report_wb.worksheets()
         target_lang = self.selected_lang.lower().strip()
         target_month = self.selected_month_str.lower().strip()
         target_year = str(self.selected_year).strip()
 
-        # 1. Tam Dil + Ay + Yıl eşleşmesi (Örn: "ESP Temmuz 2026")
         for ws in all_worksheets:
             t_lower = ws.title.lower().strip()
             if target_lang in t_lower and target_month in t_lower and target_year in t_lower:
                 return ws
 
-        # 2. Dil + Ay eşleşmesi (Örn: "POR Temmuz")
         for ws in all_worksheets:
             t_lower = ws.title.lower().strip()
             if target_lang in t_lower and target_month in t_lower:
                 return ws
 
-        # 3. Sadece Dil eşleşmesi (Örn: "ENG")
         for ws in all_worksheets:
             t_lower = ws.title.lower().strip()
             if target_lang in t_lower:
@@ -98,7 +95,7 @@ class QAReportWorker:
         return report_wb.sheet1
 
     def count_user_reports_in_sheet(self, sheet):
-        """Sekmedeki verileri okur ve kullanıcı rapor sayılarını filtreleyerek döndürür."""
+        """Kullanıcı rapor sayılarını hesaplar."""
         raw_rows = sheet.get_all_values()
         if not raw_rows or len(raw_rows) <= 1:
             return Counter()
@@ -110,7 +107,7 @@ class QAReportWorker:
         user_col_idx = -1
 
         for idx, h in enumerate(headers):
-            if any(u in h for u in ["name-surname", "name", "surname", "ad soyad", "kullanıcı", "user", "reporter"]):
+            if any(u in h for u in ["name-surname", "name", "surname", "ad soyad", "kullanıcı", "user", "reporter", "nombre"]):
                 user_col_idx = idx
                 break
         if user_col_idx == -1:
@@ -141,7 +138,7 @@ class QAReportWorker:
         return counts if sum(counts.values()) > 0 else fallback_counts
 
     def process(self):
-        self.log(f"Google Sheets servisine bağlanılıyor... (Seçilen Dil: {self.selected_lang})")
+        self.log(f"Google Sheets servisine bağlanılıyor... (Dil: {self.selected_lang})")
         self.progress(10)
         client = self.connect()
 
@@ -152,7 +149,7 @@ class QAReportWorker:
         self.log(f"Kaynak Tablo: [{source_wb.title}] ➔ Hedef Sekme: [{target_sheet.title}]")
         self.progress(25)
 
-        # 1. Kaynak Tablodaki Tüm Sekmeleri Tara
+        # 1. ESP/ENG Kaynak Tablosundaki Tüm Sekmeleri Tara
         source_worksheets = source_wb.worksheets()
         category_counts = {}
 
@@ -160,16 +157,16 @@ class QAReportWorker:
             ws_title = ws.title.strip()
             title_lower = ws_title.lower()
 
-            # 0 Kullanıcı Testi Tamamen Atlanır (Tüm Diller İçin)
-            if any(term in title_lower for term in ["0 kullanıcı", "0 kul", "new user test", "user test (0"]):
+            # 0 Kullanıcı Testi Tamamen Atlanır (İspanyolca & İngilizce İçin)
+            if any(term in title_lower for term in ["0 kullanıcı", "0 kul", "new user test", "prueba de usuario nuevo"]):
                 self.log(f"🚫 Pas geçildi: [{ws_title}] (0 Kullanıcı Testi işlenmeyecek)")
                 continue
 
-            # Sütun Başlığı Eşleştirme Mantığı
+            # Türkçe, İngilizce ve İspanyolca Sekme Eşleştirme Mantığı
             target_col_name = ""
-            if "mission card" in title_lower or "pass" in title_lower:
+            if any(term in title_lower for term in ["tarjeta de misión", "mission card", "pass", "g.görev"]):
                 target_col_name = "Zula Pass"
-            elif "general check" in title_lower or "genel" in title_lower:
+            elif any(term in title_lower for term in ["revisión general", "general check", "genel", "g.kontrol"]):
                 target_col_name = "Genel"
             else:
                 target_col_name = ws_title
@@ -180,7 +177,7 @@ class QAReportWorker:
 
         self.progress(60)
 
-        # 2. Hedef Sekmenin Yapısını Oku
+        # 2. Hedef Sekmenin Yapısını Oku (Örn: ESP Temmuz 2026)
         target_rows = target_sheet.get_all_values()
         if not target_rows:
             self.log("⚠️ Hedef sekmede veri/başlık yapısı bulunamadı!")
@@ -189,14 +186,12 @@ class QAReportWorker:
 
         target_headers = [str(h).strip() for h in target_rows[0]]
         
-        # Kullanıcı Adı Sütununu Tespit Et
         user_col_in_target = 0
         for idx, h in enumerate(target_headers):
-            if any(k in h.lower() for k in ["kullanıcı", "user", "name", "qa", "ad"]):
+            if any(k in h.lower() for k in ["kullanıcı", "user", "name", "qa", "ad", "nombre"]):
                 user_col_in_target = idx
                 break
 
-        # Sütun İndekslerini Eşleştir ("0 Kul. TESTİ" sütunu hariç tutulur)
         col_index_map = {}
         for cat_name in category_counts.keys():
             for idx, h in enumerate(target_headers):
@@ -206,7 +201,7 @@ class QAReportWorker:
 
         cell_updates = []
         
-        # 3. Satır Bazlı Eşleştirme ve Güncelleme Hazırlığı
+        # 3. Satır Bazlı Eşleştirme
         for row_idx, row in enumerate(target_rows[1:], start=2):
             if not row or user_col_in_target >= len(row):
                 continue
@@ -219,7 +214,6 @@ class QAReportWorker:
                 if cat_name in col_index_map:
                     target_c_idx = col_index_map[cat_name]
                     
-                    # Kullanıcı Adını Esnek Eşleştir
                     matched_count = 0
                     for u_src, count in u_counts.items():
                         if u_src.lower() in user_name_in_target or user_name_in_target in u_src.lower():
@@ -233,12 +227,12 @@ class QAReportWorker:
 
         self.progress(85)
 
-        # 4. Toplu Güncelleme (Biçimlendirme Bozulmaz)
+        # 4. Toplu Güncelleme (Format Korunur)
         if cell_updates:
             self.log(f"Veriler biçimlendirme korunarak [{target_sheet.title}] sekmesine yazılıyor...")
             target_sheet.batch_update(cell_updates)
             self.progress(100)
-            self.log(f"✅ İŞLEM BAŞARILI! [{target_sheet.title}] sekmesindeki veriler güncellendi (0 Kullanıcı Testi sütununa dokunulmadı).")
+            self.log(f"✅ İŞLEM BAŞARILI! [{target_sheet.title}] sekmesindeki ESP verileri güncellendi.")
         else:
             self.progress(100)
-            self.log(f"⚠️ [{target_sheet.title}] sekmesi için eşleşen kullanıcı verisi bulunamadı.")
+            self.log(f"⚠️ [{target_sheet.title}] sekmesi için eşleşen veri bulunamadı.")
