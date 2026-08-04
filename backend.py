@@ -97,7 +97,7 @@ class QAReportWorker:
         self.creds_input = creds_input
         self.source_id = source_id
         self.report_id = report_id
-        self.selected_lang = selected_lang
+        self.selected_lang = selected_lang.upper().strip()
         self.selected_year = int(selected_year)
         self.selected_month_num = MONTH_MAP.get(selected_month.lower(), 1)
         self.selected_month_str = selected_month
@@ -151,8 +151,31 @@ class QAReportWorker:
 
         return report_wb.sheet1
 
+    def map_category_by_language(self, ws_title):
+        """Her dildeki sekme isimlerini ana tablodaki doğru sütun başlığına eşler."""
+        norm_title = normalize_text(ws_title)
+        lang = self.selected_lang
+
+        # 1. Test veya Kullanılmayan Sekmeler
+        if any(k in norm_title for k in ["0kullanici", "testedenovo", "pruebadeusuario", "0kul", "test"]):
+            return None
+
+        # 2. POR (Portekizce) Özel Haritalama
+        if lang == "POR":
+            if any(k in norm_title for k in ["cartaodemissao", "missao", "diaria", "pass"]):
+                return "G. Kartı (Günlük)"
+            elif any(k in norm_title for k in ["verificacaogeral", "relatoriodeerros", "geral"]):
+                return "Genel Check"
+
+        # 3. TR / ESP / ENG Genel Haritalama
+        if any(k in norm_title for k in ["zulapass", "gunluk", "gkarti", "missioncard", "pass"]):
+            return "Zula Pass" if lang != "POR" else "G. Kartı (Günlük)"
+        elif any(k in norm_title for k in ["genelcheck", "genel", "geral", "general"]):
+            return "Genel" if lang != "POR" else "Genel Check"
+
+        return ws_title
+
     def count_user_reports_in_sheet(self, sheet):
-        """Sadece seçilen Ay ve Yıl için katı (strict) filtreleme yapar."""
         try:
             raw_rows = sheet.get_all_values()
         except Exception:
@@ -164,50 +187,55 @@ class QAReportWorker:
         headers = [normalize_text(h) for h in raw_rows[0]]
         data_rows = raw_rows[1:]
 
-        date_col_idx = 0
+        date_col_idx = -1
         user_col_idx = -1
 
         for idx, h in enumerate(headers):
+            if any(d in h for d in ["tarih", "data", "date", "fecha"]):
+                date_col_idx = idx
             if any(u in h for u in ["apelido", "nome", "user", "kullanici", "name", "reporter", "nick"]):
                 user_col_idx = idx
-                break
+
         if user_col_idx == -1:
-            user_col_idx = 1
+            user_col_idx = 1 if len(headers) > 1 else 0
+        if date_col_idx == -1:
+            date_col_idx = 0
 
         counts = Counter()
 
         for row_vals in data_rows:
             if not any(row_vals):
                 continue
-            
-            # 1. Tarih Kontrolü (Katı Filtreleme: Tarih yoksa veya farkı aysa ELENİR)
-            if date_col_idx >= len(row_vals):
-                continue
-                
-            date_val = row_vals[date_col_idx]
-            dt = self.parse_date(date_val)
-            
-            # Yalnızca seçili Ay (örn: 7) ve Yıl (örn: 2026) ile tam uyuşan satırlar işlenir
-            if not dt or dt.year != self.selected_year or dt.month != self.selected_month_num:
-                continue
 
-            # 2. Kullanıcı Adı Kontrolü
+            # Kullanıcı Adı Al
             user_name = ""
             if user_col_idx < len(row_vals):
                 val = str(row_vals[user_col_idx]).strip()
-                if val:
+                if val and not any(tot in val.lower() for tot in ["toplam", "total", "sum"]):
                     user_name = val
 
             if not user_name:
                 continue
 
-            # Şartlar sağlandıysa geçerli satır olarak 1 ekle
-            counts[user_name] += 1
+            # Tarih Filtresi Kontrolü
+            if date_col_idx < len(row_vals):
+                date_val = row_vals[date_col_idx]
+                dt = self.parse_date(date_val)
+                
+                # Tarih başarıyla okunduysa AY/YIL kontrolü yap
+                if dt:
+                    if dt.year == self.selected_year and dt.month == self.selected_month_num:
+                        counts[user_name] += 1
+                else:
+                    # Tarih okunamadıysa (örneğin tarih sütunsuz statik tablolarda) veriyi düşürmez
+                    counts[user_name] += 1
+            else:
+                counts[user_name] += 1
 
         return counts
 
     def process(self):
-        self.log(f"Google Sheets servisine bağlanılıyor... (Dil: {self.selected_lang}, Dönem: {self.selected_month_str} {self.selected_year})")
+        self.log(f"İşlem Başlatıldı | Dil: [{self.selected_lang}] | Dönem: [{self.selected_month_str} {self.selected_year}]")
         self.progress(10)
         client = self.connect()
 
@@ -215,7 +243,7 @@ class QAReportWorker:
         report_wb = client.open_by_key(self.report_id)
         
         target_sheet = self.get_target_worksheet(report_wb)
-        self.log(f"Kaynak Tablo: [{source_wb.title}] ➔ Ana Tablo Sekmesi: [{target_sheet.title}]")
+        self.log(f"Hedef Sekme: [{target_sheet.title}]")
         self.progress(25)
 
         source_worksheets = source_wb.worksheets()
@@ -223,22 +251,13 @@ class QAReportWorker:
 
         for ws in source_worksheets:
             ws_title = ws.title.strip()
-            norm_title = normalize_text(ws_title)
+            target_col_name = self.map_category_by_language(ws_title)
 
-            # Test sekmelerini atla
-            if "0kullanici" in norm_title or "testedenovo" in norm_title or "pruebadeusuario" in norm_title or "0kul" in norm_title:
+            if not target_col_name:
                 self.log(f"🚫 Pas geçildi: [{ws_title}]")
                 continue
 
-            target_col_name = ""
-            if any(k in norm_title for k in ["cartaodemissao", "missao", "gkarti", "gunluk", "tarjetademision", "missioncard", "pass"]):
-                target_col_name = "G. Kartı (Günlük)"
-            elif any(k in norm_title for k in ["verificacaogeral", "relatoriodeerros", "genelcheck", "genel", "geral", "revisiongeneral", "generalcheck"]):
-                target_col_name = "Genel Check"
-            else:
-                target_col_name = ws_title
-
-            self.log(f"📊 İşleniyor ({self.selected_month_str} {self.selected_year}): [{ws_title}] ➔ Sütun: '{target_col_name}'")
+            self.log(f"📊 Sekme Okunuyor: [{ws_title}] ➔ Hedef Sütun: '{target_col_name}'")
             user_counts = self.count_user_reports_in_sheet(ws)
             
             if target_col_name not in category_counts:
@@ -302,10 +321,10 @@ class QAReportWorker:
         self.progress(85)
 
         if cell_updates:
-            self.log(f"[{self.selected_month_str} {self.selected_year}] verileri 'G. Kartı (Günlük)' ve 'Genel Check' sütunlarına yazılıyor...")
+            self.log(f"Veriler [{target_sheet.title}] sekmesine yazılıyor...")
             safe_batch_update(target_sheet, cell_updates, self.log)
             self.progress(100)
-            self.log(f"✅ İŞLEM BAŞARILI! Sadece {self.selected_month_str} {self.selected_year} dönemine ait veriler ana tabloya işlendi.")
+            self.log(f"✅ TAMAMLANTI! [{self.selected_lang}] dili için {self.selected_month_str} {self.selected_year} verileri başarıyla işlendi.")
         else:
             self.progress(100)
-            self.log(f"⚠️ Uyarı: Seçilen tarihe ({self.selected_month_str} {self.selected_year}) ait hiçbir satır bulunamadı.")
+            self.log(f"⚠️ Seçilen kriterlere uygun aktarılacak veri bulunamadı.")
