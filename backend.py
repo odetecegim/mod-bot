@@ -14,7 +14,7 @@ MONTH_MAP = {
 
 def get_available_spreadsheets(creds_input):
     """
-    Drive üzerindeki tüm tabloları getirir ve Kaynak / Rapor ayrımını yapar.
+    Drive üzerindeki tüm tabloları getirir.
     """
     if isinstance(creds_input, dict):
         creds = Credentials.from_service_account_info(creds_input, scopes=SCOPES)
@@ -69,7 +69,7 @@ class QAReportWorker:
         return gspread.authorize(creds)
 
     def parse_date(self, date_val):
-        """Tarih formatlarını (DD.MM.YYYY, YYYY-MM-DD vb.) esnek çözümler."""
+        """Tarih formatlarını çözümleme"""
         if not date_val:
             return None
         date_str = str(date_val).strip()
@@ -81,7 +81,7 @@ class QAReportWorker:
         return None
 
     def make_signature(self, row_values):
-        """Satırın benzersiz kimliğini (imzasını) oluşturarak mükerrer kaydı engeller."""
+        """Satırın benzersiz kimliğini oluşturur."""
         return "||".join([str(val).strip().lower() for val in row_values if str(val).strip()])
 
     def process(self):
@@ -92,12 +92,13 @@ class QAReportWorker:
         self.log(f"Kaynak Tablo [{self.source_id}] ve Hedef [{self.report_id}] açılıyor...")
         self.progress(20)
         
+        # Seçimlere göre kaynak ve hedef dosyalarını aç
         source_wb = client.open_by_key(self.source_id)
         source_sheet = source_wb.sheet1
 
         report_wb = client.open_by_key(self.report_id)
         
-        # Seçilen Dil ile aynı isimli bir sekme varsa oraya yazar, yoksa ilk sekmeye yazar
+        # Hedef sekme tespiti
         try:
             if self.selected_lang != "Tümü" and self.selected_lang in [s.title for s in report_wb.worksheets()]:
                 report_sheet = report_wb.worksheet(self.selected_lang)
@@ -109,52 +110,52 @@ class QAReportWorker:
         self.log(f"Kaynak Dosya: [{source_wb.title}] ➔ Hedef: [{report_wb.title} / Sekme: {report_sheet.title}]")
         self.progress(35)
         
-        # Kaynak ve Hedef Tablo Okumaları
-        source_data = source_sheet.get_all_records()
+        # get_all_records() yerine güvenli okuma olan get_all_values() kullanılıyor (Mükerrer/Boş Sütun Başlığı Hatasını Çözer)
+        raw_source_rows = source_sheet.get_all_values()
         existing_report_values = report_sheet.get_all_values()
 
-        # Global Perf Tablosundaki mevcut verilerin imzalarını topla (Mükerrerleri engellemek için)
+        if not raw_source_rows:
+            self.log("⚠️ Kaynak tabloda hiçbir veri bulunamadı.")
+            self.progress(100)
+            return
+
+        headers = [str(h).strip().lower() for h in raw_source_rows[0]]
+        data_rows = raw_source_rows[1:]
+
+        # Tarih sütunu indeksini bul (Tarih / Date / Fecha / Data)
+        date_col_idx = -1
+        for idx, h in enumerate(headers):
+            if any(t in h for t in ["tarih", "date", "fecha", "data"]):
+                date_col_idx = idx
+                break
+
+        # Hedef tablodaki mevcut verilerin imzalarını topla (Mükerrerleri engellemek için)
         existing_signatures = set()
         for row in existing_report_values:
             sig = self.make_signature(row)
             if sig:
                 existing_signatures.add(sig)
 
-        self.log(f"Global Perf Tablosunda mevcut {len(existing_signatures)} kayıt tarandı.")
+        self.log(f"Hedef Tabloda mevcut {len(existing_signatures)} kayıt tarandı.")
         self.progress(50)
 
-        self.log(f"ESP/Kaynak verileri filtreleniyor... (Yıl={self.selected_year}, Ay={self.selected_month_str})")
+        self.log(f"Veriler filtreleniyor... (Yıl={self.selected_year}, Ay={self.selected_month_str})")
         
         rows_to_insert = []
         duplicate_count = 0
 
-        for row in source_data:
-            row_lower = {str(k).lower(): v for k, v in row.items()}
-            row_vals = list(row.values())
-            
-            # Tarih Sütunu Tespiti (ESP: fecha / TR: tarih / POR: data / ENG: date)
-            date_val = None
-            for key in row_lower:
-                if any(t in key for t in ["tarih", "date", "fecha", "data"]):
-                    date_val = row_lower[key]
-                    break
+        for row_vals in data_rows:
+            # Boş satırları atla
+            if not any(row_vals):
+                continue
 
-            dt = self.parse_date(date_val)
-            if dt:
-                if dt.year != self.selected_year or dt.month != self.selected_month_num:
-                    continue
-
-            # Dil Sütunu Kontrolü
-            if self.selected_lang != "Tümü":
-                lang_val = ""
-                for key in row_lower:
-                    if any(l in key for l in ["dil", "lang", "idioma"]):
-                        lang_val = str(row_lower[key]).upper()
-                        break
-                
-                # Tabloda dil sütunu bulunuyorsa ve seçilen dille eşleşmiyorsa atla
-                if lang_val and self.selected_lang not in lang_val:
-                    continue
+            # Tarih Kontrolü
+            if date_col_idx != -1 and date_col_idx < len(row_vals):
+                date_val = row_vals[date_col_idx]
+                dt = self.parse_date(date_val)
+                if dt:
+                    if dt.year != self.selected_year or dt.month != self.selected_month_num:
+                        continue
 
             # MÜKERRER KAYIT KONTROLÜ
             row_sig = self.make_signature(row_vals)
@@ -166,17 +167,17 @@ class QAReportWorker:
             existing_signatures.add(row_sig)
 
         self.progress(75)
-        self.log(f"Süzgeçten geçen: {len(rows_to_insert)} yeni kayıt işlenmeye hazır ({duplicate_count} mükerrer kayıt elendi).")
+        self.log(f"Aktarıma hazır: {len(rows_to_insert)} yeni kayıt ({duplicate_count} mükerrer kayıt elendi).")
 
-        # Global Perf Tablosuna Veri Ekleme
+        # Hedef Tabloya Yazma
         if rows_to_insert:
-            self.log("Yeni veriler Global Perf Tablosu'na aktarılıyor...")
+            self.log("Veriler hedef tabloya aktarılıyor...")
             report_sheet.append_rows(rows_to_insert)
             self.progress(100)
-            self.log(f"✅ İŞLEM BAŞARILI! {len(rows_to_insert)} adet yeni kayıt Global Perf Tablosu'na yazıldı.")
+            self.log(f"✅ İŞLEM BAŞARILI! {len(rows_to_insert)} adet yeni kayıt hedef tabloya yazıldı.")
         else:
             self.progress(100)
             if duplicate_count > 0:
-                self.log("⚠️ Aktarılacak tüm veriler zaten Global Perf Tablosu'nda mevcut.")
+                self.log("⚠️ Aktarılacak veriler zaten hedef tabloda mevcut.")
             else:
-                self.log("⚠️ Seçilen filtrelere (ESP - Temmuz 2026) uygun kayıt bulunamadı.")
+                self.log("⚠️ Seçilen filtrelere uygun yeni kayıt bulunamadı.")
