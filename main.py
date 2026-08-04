@@ -171,7 +171,7 @@ def login_screen():
 
     st.markdown('<div class="footer-text">Oturum <span>1 saat</span> boyunca aktif kalır</div>', unsafe_allow_html=True)
 
-# Oturum Doğrulama Kontrolü (Güvenli Kilit Ekranı Yönlendirmesi)
+# Oturum Doğrulama Kontrolü
 if not st.session_state.get("authenticated", False) or st.session_state.get("login_time") is None:
     st.session_state["authenticated"] = False
     st.session_state["login_time"] = None
@@ -185,7 +185,6 @@ if not st.session_state.get("authenticated", False) or st.session_state.get("log
 col_title, col_logout = st.columns([3, 1])
 
 with col_title:
-    # Güvenli Kalan Süre Hesaplama (TypeError Önleyici)
     login_time = st.session_state.get("login_time")
     if login_time is not None:
         elapsed_time = time.time() - login_time
@@ -260,7 +259,22 @@ try:
     report_sheets_dict = sheets_data.get("report", sheets_data.get("all", {}))
     
     source_options = list(source_sheets_dict.keys())
-    report_options = list(report_sheets_dict.keys())
+    
+    # Rapor Tablosunu sadece "Global Perf Tablosu" olacak şekilde filtreliyoruz
+    filtered_report_dict = {
+        name: sheet_id for name, sheet_id in report_sheets_dict.items()
+        if "global perf" in name.lower()
+    }
+
+    # Eğer filtre sonucunda bulunursa onu alıyoruz, bulunamazsa orijinal listeden eşleşen arıyoruz
+    if filtered_report_dict:
+        report_sheets_dict = filtered_report_dict
+        report_options = list(report_sheets_dict.keys())
+    else:
+        report_options = [k for k in report_sheets_dict.keys() if "global perf" in k.lower()]
+        if not report_options and list(report_sheets_dict.keys()):
+            # Eğer tam isim tutmuyorsa listedeki ilk tabloyu "Global Perf Tablosu" olarak al
+            report_options = [list(report_sheets_dict.keys())[0]]
 
     if not source_options:
         st.warning("⚠️ Erişilebilir Google Sheet bulunamadı. Tabloları Service Account e-postası ile paylaştığınızdan emin olun.")
