@@ -13,8 +13,24 @@ SCOPES = [
 ]
 
 # ==========================================
-# 🧹 YARDIMCI FONKSİYONLAR
+# 🧹 YARDIMCI FONKSİYONLAR & İSİM TEMİZLEME
 # ==========================================
+
+def clean_name_string(text):
+    """İsimleri karşılaştırmadan önce tüm aksan, özel karakter ve boşluklardan arındırır."""
+    if not text:
+        return ""
+    text = str(text).strip().lower()
+    replacements = {
+        'ı': 'i', 'i̇': 'i', 'ğ': 'g', 'ü': 'u', 'ş': 's', 'ö': 'o', 'ç': 'c',
+        'ñ': 'n', 'á': 'a', 'é': 'e', 'í': 'i', 'ó': 'o', 'ú': 'u',
+        'ã': 'a', 'õ': 'o', 'â': 'a', 'ê': 'e', 'ô': 'o', 'à': 'a'
+    }
+    for k, v in replacements.items():
+        text = text.replace(k, v)
+    text = unicodedata.normalize('NFKD', text).encode('ASCII', 'ignore').decode('utf-8')
+    text = re.sub(r'[^a-z0-9]', '', text)
+    return text
 
 def normalize_text(text):
     if not text:
@@ -30,9 +46,6 @@ def normalize_text(text):
     text = unicodedata.normalize('NFKD', text).encode('ASCII', 'ignore').decode('utf-8')
     text = re.sub(r'[^a-z0-9\s]', ' ', text)
     return " ".join(text.split())
-
-def normalize_text_strict(text):
-    return re.sub(r'\s+', '', normalize_text(text))
 
 _MONTH_MAP_RAW = {
     "ocak": 1, "şubat": 2, "mart": 3, "nisan": 4, "mayıs": 5, "haziran": 6,
@@ -53,20 +66,29 @@ def get_month_number(month_str):
         return int(norm)
     return MONTH_MAP.get(norm, 1)
 
-def calculate_name_similarity(target_name, src_name):
-    t_strict = normalize_text_strict(target_name)
-    s_strict = normalize_text_strict(src_name)
-    if not t_strict or not s_strict:
-        return 0.0
-    if t_strict == s_strict:
-        return 1.0
-    t_norm = normalize_text(target_name)
-    s_norm = normalize_text(src_name)
-    t_tokens = set(t_norm.split())
-    s_tokens = set(s_norm.split())
-    if t_tokens and (t_tokens == s_tokens or t_strict in s_strict or s_strict in t_strict):
-        return 0.85
-    return 0.0
+def match_names(target_name, src_name):
+    t_clean = clean_name_string(target_name)
+    s_clean = clean_name_string(src_name)
+
+    if not t_clean or not s_clean:
+        return False
+
+    if t_clean == s_clean:
+        return True
+
+    if len(t_clean) >= 3 and len(s_clean) >= 3:
+        if t_clean in s_clean or s_clean in t_clean:
+            return True
+
+    t_words = set(normalize_text(target_name).split())
+    s_words = set(normalize_text(src_name).split())
+
+    if t_words and s_words:
+        common = t_words.intersection(s_words)
+        if len(common) >= 1 and any(len(w) >= 3 for w in common):
+            return True
+
+    return False
 
 def safe_batch_update(sheet, updates, log_func, batch_size=20):
     total_len = len(updates)
@@ -116,7 +138,7 @@ class BaseLanguageHandler:
         if not str_val:
             return None, None
 
-        # 1. Standart Formatlar
+        # Tarihi saat bilgisinden (05.07.2026 02:31:27) ayırır
         clean_date = re.split(r'\s+', str_val)[0]
         for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d.%m.%y", "%d/%m/%y"):
             try:
@@ -125,24 +147,11 @@ class BaseLanguageHandler:
             except ValueError:
                 continue
 
-        # 2. Metinsel Ay Yakalama (Örn: "15 Şubat 2026" veya "Feb 12")
-        norm_str = normalize_text(str_val)
-        found_month = None
-        for m_name, m_num in MONTH_MAP.items():
-            if m_name in norm_str:
-                found_month = m_num
-                break
-
-        found_year = None
-        year_match = re.search(r'\b(202[0-9])\b', str_val)
-        if year_match:
-            found_year = int(year_match.group(1))
-
-        return found_month, found_year
+        return None, None
 
 class PORLanguageHandler(BaseLanguageHandler):
     def map_category(self, ws_title):
-        norm = normalize_text_strict(ws_title)
+        norm = normalize_text(ws_title)
         if self.is_ignored_sheet(norm):
             return None
         if any(k in norm for k in ["cartaodemissao", "missao", "diaria", "pass", "gkarti", "kart"]):
@@ -153,7 +162,7 @@ class PORLanguageHandler(BaseLanguageHandler):
 
 class TRLanguageHandler(BaseLanguageHandler):
     def map_category(self, ws_title):
-        norm = normalize_text_strict(ws_title)
+        norm = normalize_text(ws_title)
         if self.is_ignored_sheet(norm):
             return None
         if any(k in norm for k in ["zulapass", "gunluk", "gkarti", "mission", "pass", "kart"]):
@@ -164,18 +173,18 @@ class TRLanguageHandler(BaseLanguageHandler):
 
 class ESPLanguageHandler(BaseLanguageHandler):
     def map_category(self, ws_title):
-        norm = normalize_text_strict(ws_title)
+        norm = normalize_text(ws_title)
         if self.is_ignored_sheet(norm):
             return None
-        if any(k in norm for k in ["tarjetademision", "mision", "diaria", "pass", "gkarti", "kart"]):
+        if any(k in norm for k in ["mision", "diaria", "tarjeta", "pase", "pass", "gkarti", "kart"]):
             return "G. Kartı (Günlük)"
-        elif any(k in norm for k in ["revisiongeneral", "general", "check"]):
+        elif any(k in norm for k in ["revision", "general", "check"]):
             return "Genel Check"
         return None
 
 class ENGLanguageHandler(BaseLanguageHandler):
     def map_category(self, ws_title):
-        norm = normalize_text_strict(ws_title)
+        norm = normalize_text(ws_title)
         if self.is_ignored_sheet(norm):
             return None
         if any(k in norm for k in ["missioncard", "mission", "card", "pass", "gkarti", "kart"]):
@@ -255,56 +264,44 @@ class QAReportWorker:
         headers = [normalize_text(h) for h in raw_rows[0]]
         data_rows = raw_rows[1:]
 
-        date_col_idx = -1
-        user_col_idx = -1
+        date_col_idx = 0  # Görseldeki gibi 1. Kolon Tarih
+        user_col_indices = []
 
+        # İsim / Nick sütunlarının tespiti
         for idx, h in enumerate(headers):
-            if any(d in h for d in ["tarih", "data", "date", "fecha", "time", "zaman"]):
-                date_col_idx = idx
-            if any(u in h for u in ["name", "surname", "apelido", "nome", "user", "kullanici", "reporter", "nick", "nombre", "apellido", "qa"]):
-                if user_col_idx == -1:
-                    user_col_idx = idx
+            if any(u in h for u in ["nombre", "apellido", "nick", "personaje", "kullanici", "user", "name", "qa", "reporter"]):
+                user_col_indices.append(idx)
 
-        # Kolonlar otomatik tespit edilemediyse esnek varsayılan atamaları
-        if date_col_idx == -1:
-            date_col_idx = 0
-        if user_col_idx == -1:
-            user_col_idx = 1 if len(headers) > 1 else 0
+        if not user_col_indices:
+            user_col_indices = [1, 2] # Default olarak 2. ve 3. Sütunlar (Nombre & Nick)
 
         counts = Counter()
-        matched_rows = 0
-        ignored_rows = 0
 
         for row_vals in data_rows:
             if not any(row_vals):
                 continue
 
-            # 📌 TARİH KONTROLÜ
+            # 1. TARİH VE AY FİLTRESİ
             date_val = row_vals[date_col_idx] if date_col_idx < len(row_vals) else None
             m_num, y_num = self.handler.parse_date(date_val)
 
-            # Yıl bilgisi varsa ve uyuşmuyorsa atla
             if y_num and y_num != self.selected_year:
-                ignored_rows += 1
                 continue
-
-            # Ay bilgisi varsa ve uyuşmuyorsa atla
             if m_num and m_num != self.selected_month_num:
-                ignored_rows += 1
                 continue
 
-            # 📌 KULLANICI ADI
-            user_name = ""
-            if user_col_idx < len(row_vals):
-                val = str(row_vals[user_col_idx]).strip()
-                if val and not any(tot in val.lower() for tot in ["toplam", "total", "sum", "kullanıcı"]):
-                    user_name = val
+            # 2. İSİM SEÇİMİ (Aynı satırdaki Ad-Soyad veya Nick'ten geçerli olan 1 tanesini alır)
+            primary_name = ""
+            for u_idx in user_col_indices:
+                if u_idx < len(row_vals):
+                    val = str(row_vals[u_idx]).strip()
+                    if val and not any(tot in val.lower() for tot in ["toplam", "total", "sum", "nombre", "nick"]):
+                        primary_name = val
+                        break # İlk geçerli ismi bulduğunda durur (çift sayımı engeller)
 
-            if user_name:
-                counts[user_name] += 1
-                matched_rows += 1
+            if primary_name:
+                counts[primary_name] += 1
 
-        self.log(f"   ℹ️ [{sheet.title}] -> {matched_rows} satır eşleşti, {ignored_rows} satır farklı tarihte olduğu için atlandı.")
         return counts
 
     def process(self):
@@ -337,7 +334,7 @@ class QAReportWorker:
                 self.log(f"🚫 Pas geçildi (Kategori Dışı Sekme): [{ws_title}]")
                 continue
 
-            self.log(f"📊 Okunuyor: [{ws_title}] ➔ Hedef Sütun: '{target_col_name}'")
+            self.log(f"📊 ESP Sekmesi Okunuyor: [{ws_title}] ➔ Hedef Sütun: '{target_col_name}'")
             user_counts = self.count_user_reports_in_sheet(ws)
             
             if target_col_name not in category_counts:
@@ -357,7 +354,7 @@ class QAReportWorker:
         user_col_in_target = 0
         for idx, h in enumerate(target_headers):
             h_norm = normalize_text(h)
-            if any(k in h_norm for k in ["kullanici", "user", "name", "qa", "ad", "apelido", "nombre", "sobrenome", "apellido"]):
+            if any(k in h_norm for k in ["kullanici", "user", "name", "qa", "ad", "apelido", "nombre", "sobrenome", "apellido", "oyuncu", "tester"]):
                 user_col_in_target = idx
                 break
 
@@ -367,9 +364,9 @@ class QAReportWorker:
             matched_idx = None
             
             if "kart" in cat_norm or "günlük" in cat_norm or "pass" in cat_norm:
-                matched_idx = 3   # D Sütunu
+                matched_idx = 3   # D Sütunu (G. Kartı)
             elif "genel" in cat_norm or "check" in cat_norm:
-                matched_idx = 5   # F Sütunu
+                matched_idx = 5   # F Sütunu (Genel Check)
 
             if matched_idx is not None:
                 col_index_map[cat_name] = matched_idx
@@ -392,10 +389,11 @@ class QAReportWorker:
             
             for row_idx, t_name in target_users:
                 total_score = 0
+                matched_sources = []
                 for src_name, count in u_counts.items():
-                    sim_score = calculate_name_similarity(t_name, src_name)
-                    if sim_score >= 0.85:
+                    if match_names(t_name, src_name):
                         total_score += count
+                        matched_sources.append(src_name)
 
                 if total_score > 0:
                     a1_cell = gspread.utils.rowcol_to_a1(row_idx, target_c_idx + 1)
@@ -403,6 +401,7 @@ class QAReportWorker:
                         'range': f"{a1_cell}:{a1_cell}",
                         'values': [[int(total_score)]]
                     })
+                    self.log(f"   ✓ {t_name} = {total_score} (Eşleşen: {', '.join(matched_sources)})")
 
         self.progress(85)
 
@@ -410,7 +409,7 @@ class QAReportWorker:
             self.log(f"Veriler [{target_sheet.title}] sekmesine yazılıyor... ({len(cell_updates)} hücre)")
             safe_batch_update(target_sheet, cell_updates, self.log)
             self.progress(100)
-            self.log(f"✅ İŞLEM BAŞARILI! D ve F sütunları güncellendi.")
+            self.log(f"✅ İŞLEM BAŞARILI! Gerçek rapor sayıları D ve F sütunlarına aktarıldı.")
         else:
             self.progress(100)
             self.log(f"⚠️ Uyarı: Seçilen filtre kriterlerine uyan kayıt bulunamadı.")
