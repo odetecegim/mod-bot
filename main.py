@@ -34,7 +34,7 @@ def check_session_timeout():
 
 check_session_timeout()
 
-# --- ZULA OYUNCU REHBERİ TEMALI GİRİŞ ARAYÜZÜ ---
+# --- ZULA OYUNCU REHBERİ TEMALI GİRİŞ ARAYÜZÜ (SADE VE AŞAĞIDA) ---
 def login_screen():
     # Zula Oyuncu Rehberi Resmi HD Arka Plan Görseli
     bg_image_url = "https://images4.alphacoders.com/122/thumb-1920-1228871.jpg"
@@ -43,12 +43,12 @@ def login_screen():
         <style>
             /* Zula Arka Plan Görseli */
             .stApp {{
-                background: linear-gradient(rgba(10, 10, 15, 0.65), rgba(10, 10, 15, 0.78)),
+                background: linear-gradient(rgba(10, 10, 15, 0.60), rgba(10, 10, 15, 0.70)),
                             url('{bg_image_url}') no-repeat center center fixed !important;
                 background-size: cover !important;
             }}
 
-            /* Dikey ve Yatay Tam Ortalama */
+            /* Dikey Hizalama Ayarı */
             html, body, [data-testid="stAppViewContainer"] {{
                 height: 100vh;
                 margin: 0;
@@ -65,54 +65,7 @@ def login_screen():
                 justify-content: center;
             }}
 
-            /* Rozet Alanı */
-            .badge-box {{
-                background: rgba(239, 68, 68, 0.18);
-                border: 1px solid rgba(239, 68, 68, 0.45);
-                border-radius: 50px;
-                padding: 6px 16px;
-                width: fit-content;
-                margin: 0 auto 1rem auto;
-                display: flex;
-                align-items: center;
-                gap: 8px;
-                backdrop-filter: blur(8px);
-            }}
-            .badge-dot {{
-                width: 8px;
-                height: 8px;
-                background-color: #ef4444;
-                border-radius: 50%;
-                box-shadow: 0 0 10px #ef4444;
-            }}
-            .badge-text {{
-                color: #f87171;
-                font-size: 11px;
-                font-weight: 700;
-                letter-spacing: 1.5px;
-                text-transform: uppercase;
-            }}
-
-            /* Başlık Stilleri */
-            .title-text {{
-                text-align: center;
-                font-size: 26px;
-                font-weight: 800;
-                color: #ffffff;
-                letter-spacing: -0.5px;
-                margin-bottom: 6px;
-                font-family: 'Inter', system-ui, -apple-system, sans-serif;
-                text-shadow: 0 2px 10px rgba(0,0,0,0.7);
-            }}
-            .subtitle-text {{
-                text-align: center;
-                font-size: 13px;
-                color: #cbd5e1;
-                margin-bottom: 1.8rem;
-                text-shadow: 0 1px 5px rgba(0,0,0,0.7);
-            }}
-
-            /* Glassmorphism Form Kartı */
+            /* Glassmorphism Form Kartı - Biraz daha aşağıya konumlandırıldı */
             div[data-testid="stForm"] {{
                 background: rgba(15, 15, 23, 0.82) !important;
                 border: 1px solid rgba(255, 255, 255, 0.15) !important;
@@ -120,6 +73,7 @@ def login_screen():
                 padding: 2.2rem 2rem !important;
                 box-shadow: 0 25px 50px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.15) !important;
                 backdrop-filter: blur(16px);
+                margin-top: 5vh !important; /* Kartı daha aşağıya kaydırır */
             }}
 
             /* Input Alanları */
@@ -174,16 +128,6 @@ def login_screen():
             }}
         </style>
     """, unsafe_allow_html=True)
-
-    st.markdown("""
-        <div class="badge-box">
-            <div class="badge-dot"></div>
-            <div class="badge-text">QA CONTROL CENTER</div>
-        </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown('<div class="title-text">Yönetici Portalı</div>', unsafe_allow_html=True)
-    st.markdown('<div class="subtitle-text">Devam etmek için güvenli şifrenizi girin</div>', unsafe_allow_html=True)
 
     with st.form("login_form"):
         password_input = st.text_input("GİRİŞ ŞİFRESİ", type="password", placeholder="••••••••••••")
