@@ -19,6 +19,12 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive"
 ]
 
+# Türkçe Ay İsimleri Haritası
+MONTH_MAP = {
+    "ocak": 1, "subat": 2, "mart": 3, "nisan": 4, "mayis": 5, "haziran": 6,
+    "temmuz": 7, "agustos": 8, "eylul": 9, "ekim": 10, "kasim": 11, "aralik": 12
+}
+
 def normalize_text(text):
     if not text:
         return ""
@@ -33,6 +39,23 @@ def normalize_text(text):
     text = unicodedata.normalize('NFKD', text).encode('ASCII', 'ignore').decode('utf-8')
     text = re.sub(r'[^a-z0-9\s]', ' ', text)
     return " ".join(text.split())
+
+def parse_row_date(date_str):
+    """Satırdaki Zaman Damgasından Ay ve Yıl Çıkarır"""
+    if not date_str:
+        return None, None
+    try:
+        # DD.MM.YYYY HH:MM:SS veya YYYY-MM-DD vb. kalıpları eşleştir
+        match = re.search(r'(\d{1,4})[\./-](\d{1,2})[\./-](\d{1,4})', str(date_str))
+        if match:
+            g1, g2, g3 = match.groups()
+            if len(g1) == 4: # YYYY-MM-DD
+                return int(g2), int(g1)
+            elif len(g3) == 4: # DD.MM.YYYY
+                return int(g2), int(g3)
+    except Exception:
+        pass
+    return None, None
 
 def safe_batch_update(sheet, updates, log_func, batch_size=25):
     total_len = len(updates)
@@ -52,21 +75,8 @@ def safe_batch_update(sheet, updates, log_func, batch_size=25):
                     log_func(f"❌ Güncelleme Hatası: {str(e)}")
                     raise e
 
-def get_available_spreadsheets(creds_input):
-    try:
-        if isinstance(creds_input, dict):
-            creds = Credentials.from_service_account_info(creds_input, scopes=SCOPES)
-        else:
-            creds = Credentials.from_service_account_file(creds_input, scopes=SCOPES)
-        client = gspread.authorize(creds)
-        files = client.list_spreadsheet_files()
-        all_sheets = {f['name']: f['id'] for f in files if f.get('name')}
-        return {"all": all_sheets, "source": all_sheets, "report": all_sheets}
-    except Exception as e:
-        return {"error": str(e), "all": {}, "source": {}, "report": {}}
-
 # ==========================================
-# 🧠 AI & KURAL BAZLI HARİTALAYICI
+# 🧠 HARİTALAMA MOTORU
 # ==========================================
 
 def get_sheet_column_mapping(source_titles, target_headers, log_func, api_key=None):
@@ -80,14 +90,13 @@ def get_sheet_column_mapping(source_titles, target_headers, log_func, api_key=No
             Hedef Tablo Başlıkları: {target_headers}
 
             GÖREV:
-            1. '0 Kullanıcı', 'Teste', 'OLD', 'Kopyası' içeren test sekmelerini eler (null yap).
-            2. Sekme isimlerini hedef tablodaki BİREBİR (EXACT) sütun metniyle eşleştir:
-               - 'Cartão De Missão (günlük)' veya benzeri -> 'G. Kartı (Günlük)'
-               - 'Verificação Geral (genel)' veya benzeri -> 'Genel Check'
-               - 'Relatório de erros' veya benzeri -> 'Hata bildirimi'
+            - '0 Kullanıcı', 'Teste', 'OLD', 'Kopyası' geçen test sekmelerini eler (null yap).
+            - Sekme isimlerini hedef tablodaki BİREBİR sütun metniyle eşleştir:
+               'Cartão De Missão (günlük)' -> 'G. Kartı (Günlük)'
+               'Verificação Geral (genel)' -> 'Genel Check'
+               'Relatório de erros' -> 'Hata bildirimi'
 
-            SADECE JSON DÖNDÜR:
-            {{ "Sekme Adı": "Hedef Tablo Başlığı Metni" }}
+            SADECE JSON DÖNDÜR: {{ "Sekme Adı": "Hedef Sütun Başlığı Metni" }}
             """
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
@@ -95,9 +104,7 @@ def get_sheet_column_mapping(source_titles, target_headers, log_func, api_key=No
                 response_format={"type": "json_object"},
                 temperature=0.0
             )
-            res = json.loads(response.choices[0].message.content)
-            log_func(f"🤖 AI Eşleşme Haritası: {res}")
-            return res
+            return json.loads(response.choices[0].message.content)
         except Exception as e:
             log_func(f"⚠️ AI Analiz Hatası ({str(e)}), kural bazlı haritalama çalıştırılıyor.")
 
@@ -105,7 +112,6 @@ def get_sheet_column_mapping(source_titles, target_headers, log_func, api_key=No
     for st in source_titles:
         st_norm = normalize_text(st)
         
-        # Test Sekmelerini Pas Geç (Gereksiz kopyalar ve testler)
         if any(k in st_norm for k in ["0 kul", "teste de novo", "old", "kopyasi", "copy"]):
             mapping[st] = None
             continue
@@ -114,16 +120,13 @@ def get_sheet_column_mapping(source_titles, target_headers, log_func, api_key=No
         for th in target_headers:
             th_norm = normalize_text(th)
             
-            # Mission Card / Cartão De Missão -> G. Kartı (Günlük)
-            if any(k in st_norm for k in ["cartao", "missao", "card", "gunluk"]) and any(k in th_norm for k in ["g karti", "karti", "gunluk", "mission"]):
+            if any(k in st_norm for k in ["cartao", "missao", "card", "gunluk"]) and any(k in th_norm for k in ["g karti", "karti", "gunluk"]):
                 matched_header = th
                 break
-            # Verificação Geral -> Genel Check
             elif any(k in st_norm for k in ["verificacao", "geral", "genel", "check"]) and any(k in th_norm for k in ["genel", "check", "geral"]):
                 matched_header = th
                 break
-            # Relatório de erros -> Hata bildirimi
-            elif any(k in st_norm for k in ["relatorio", "erro", "hata", "bug"]) and any(k in th_norm for k in ["hata", "bildirimi", "error", "bug"]):
+            elif any(k in st_norm for k in ["relatorio", "erro", "hata", "bug"]) and any(k in th_norm for k in ["hata", "bildirimi"]):
                 matched_header = th
                 break
 
@@ -142,7 +145,8 @@ class QAReportWorker:
         self.report_id = report_id
         self.selected_lang = selected_lang.upper().strip()
         self.selected_year = int(selected_year)
-        self.selected_month_str = selected_month
+        self.selected_month_str = selected_month.strip()
+        self.target_month_num = MONTH_MAP.get(normalize_text(selected_month), 7)
         self.log = log_callback
         self.progress = progress_callback
         self.openai_api_key = openai_api_key
@@ -162,37 +166,22 @@ class QAReportWorker:
         source_wb = client.open_by_key(self.source_id)
         report_wb = client.open_by_key(self.report_id)
         
-        # 🎯 1. KESİN YIL VE AY DOĞRULAMALI HEDEF SEKME SEÇİMİ
+        # 🎯 1. KESİN YIL VE AY MATCH (Örn: "POR TEMMUZ 2026")
         target_sheet = None
         target_lang = normalize_text(self.selected_lang)
         target_month = normalize_text(self.selected_month_str)
-        target_year = str(self.selected_year).strip()
+        target_year = str(self.selected_year)
 
-        # Öncelik 1: Hem DİL hem AY hem YIL eşleşen sekme ("POR TEMMUZ 2026")
         for ws in report_wb.worksheets():
             t_norm = normalize_text(ws.title)
             if target_lang in t_norm and target_month in t_norm and target_year in t_norm:
                 target_sheet = ws
                 break
 
-        # Öncelik 2: Bulunamazsa DİL ve YIL eşleşen
         if not target_sheet:
-            for ws in report_wb.worksheets():
-                t_norm = normalize_text(ws.title)
-                if target_lang in t_norm and target_year in t_norm:
-                    target_sheet = ws
-                    break
-
-        # Öncelik 3: Bulunamazsa DİL ve AY eşleşen
-        if not target_sheet:
-            for ws in report_wb.worksheets():
-                t_norm = normalize_text(ws.title)
-                if target_lang in t_norm and target_month in t_norm:
-                    target_sheet = ws
-                    break
-
-        if not target_sheet:
-            target_sheet = report_wb.sheet1
+            self.log(f"❌ HATA: [{self.selected_lang} {self.selected_month_str} {self.selected_year}] adında hedef sekme bulunamadı!")
+            self.progress(100)
+            return
 
         self.log(f"🎯 Hedef Sekme Bulundu: [{target_sheet.title}]")
         self.progress(20)
@@ -203,12 +192,10 @@ class QAReportWorker:
             self.progress(100)
             return
 
-        # 2. HEDEF BAŞLIKLARI AL
         target_headers = [str(h).strip() for h in target_rows[0]]
         source_worksheets = source_wb.worksheets()
         source_titles = [ws.title.strip() for ws in source_worksheets]
 
-        # 3. HARİTALAMA YAP
         ai_map = get_sheet_column_mapping(source_titles, target_headers, self.log, self.openai_api_key)
         self.progress(40)
 
@@ -228,10 +215,22 @@ class QAReportWorker:
                 continue
 
             counts = Counter()
+            filtered_rows_count = 0
+
             for row in raw_rows[1:]:
                 if not row:
                     continue
+
+                # 🗓️ TARİH FİLTRESİ CHECK (Zaman damgası 0. Sütundadır)
+                row_date_str = str(row[0]).strip() if len(row) > 0 else ""
+                row_month, row_year = parse_row_date(row_date_str)
+
+                # Yalnızca seçilen ay ve yıl verisi işlenir
+                if row_month and row_year:
+                    if row_month != self.target_month_num or row_year != self.selected_year:
+                        continue # Seçilen döneme uymayan veriyi atla
                 
+                filtered_rows_count += 1
                 name_b = str(row[1]).strip() if len(row) > 1 else ""
                 nick_c = str(row[2]).strip() if len(row) > 2 else ""
 
@@ -241,13 +240,15 @@ class QAReportWorker:
                     if name_b and name_b != user_key:
                         counts[name_b] += 1
 
+            self.log(f"   └─ 📅 {self.selected_month_str} {self.selected_year} tarihli işlenebilir satır sayısı: {filtered_rows_count}")
+
             if mapped_header not in category_counts:
                 category_counts[mapped_header] = Counter()
             category_counts[mapped_header].update(counts)
 
         self.progress(70)
 
-        # 4. HEDEF TABLODAKİ KULLANICI LİSTESİNİ ÇIKAR
+        # HEDEF KULLANICI LİSTESİ VE HÜCRE GÜNCELLEMELERİ
         target_users = []
         for row_idx, row in enumerate(target_rows[1:], start=2):
             if not row:
@@ -257,7 +258,6 @@ class QAReportWorker:
             if ad_soyad or nick:
                 target_users.append((row_idx, ad_soyad, nick))
 
-        # 5. HÜCRE GÜNCELLEMELERİNİ HAZIRLA
         cell_updates = []
         for target_col_header, u_counts in category_counts.items():
             if target_col_header not in target_headers:
@@ -288,12 +288,11 @@ class QAReportWorker:
 
         self.progress(90)
 
-        # 6. VERİLERİ YAZ
         if cell_updates:
             self.log(f"✍️ Veriler Google Sheets [{target_sheet.title}] sekmesine yazılıyor... ({len(cell_updates)} hücre)")
             safe_batch_update(target_sheet, cell_updates, self.log)
             self.progress(100)
-            self.log("✅ İŞLEM BAŞARILI! Tablo kontrol edilip veriler aktarıldı.")
+            self.log("✅ İŞLEM BAŞARILI! Yalnızca Temmuz 2026 verileri tabloya aktarıldı.")
         else:
             self.progress(100)
-            self.log("⚠️ Eşleşen kullanıcı verisi bulunamadı.")
+            self.log("⚠️ Seçilen döneme (Temmuz 2026) uygun eşleşen veri bulunamadı.")
