@@ -36,8 +36,8 @@ check_session_timeout()
 
 # --- ZULA LOGOLU VE GRİ-SİYAH GEÇİŞLİ GİRİŞ ARAYÜZÜ ---
 def login_screen():
-    # Şeffaf Zula Logosu CDN Bağlantısı
-    zula_logo_url = "https://cdn.mmofanclub.com/logos/zula-logo.png" 
+    # Wikimedia Commons'taki orijinal Zula New LOGO VECTOR PNG görseli
+    zula_logo_url = "https://upload.wikimedia.org/wikipedia/commons/9/91/Zula_New_LOGO_VECTOR.png"
 
     st.markdown(f"""
         <style>
@@ -68,17 +68,17 @@ def login_screen():
             .main .block-container::before {{
                 content: "";
                 position: absolute;
-                top: 42%;
+                top: 40%;
                 left: 50%;
                 transform: translate(-50%, -50%);
-                width: 320px;
-                height: 160px;
+                width: 340px;
+                height: 170px;
                 background-image: url('{zula_logo_url}');
                 background-size: contain;
                 background-repeat: no-repeat;
                 background-position: center;
-                opacity: 0.85;
-                filter: drop-shadow(0 0 25px rgba(245, 158, 11, 0.35));
+                opacity: 0.9;
+                filter: drop-shadow(0 0 25px rgba(245, 158, 11, 0.4));
                 pointer-events: none;
                 z-index: 0;
             }}
@@ -87,7 +87,7 @@ def login_screen():
             div[data-testid="stForm"] {{
                 position: relative;
                 z-index: 1;
-                background: rgba(18, 20, 26, 0.75) !important;
+                background: rgba(18, 20, 26, 0.78) !important;
                 border: 1px solid rgba(255, 255, 255, 0.12) !important;
                 border-radius: 20px !important;
                 padding: 2.2rem 2rem !important;
