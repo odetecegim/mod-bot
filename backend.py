@@ -20,7 +20,7 @@ MONTH_MAP = {
 }
 
 def normalize_text(text):
-    """Metinleri küçük harfe çevirir, Türkçe, İspanyolca ve Portekizce karakterleri temizler."""
+    """Metinleri küçük harfe çevirir; Türkçe, Portekizce ve İspanyolca karakterleri temizler."""
     if not text:
         return ""
     text = str(text).strip().lower()
@@ -28,7 +28,7 @@ def normalize_text(text):
         'ı': 'i', 'İ': 'i', 'ğ': 'g', 'Ğ': 'g', 'ü': 'u', 'Ü': 'u',
         'ş': 's', 'Ş': 's', 'ö': 'o', 'Ö': 'o', 'ç': 'c', 'Ç': 'c',
         'ñ': 'n', 'á': 'a', 'é': 'e', 'í': 'i', 'ó': 'o', 'ú': 'u',
-        'ã': 'a', 'õ': 'o', 'â': 'a', 'ê': 'e', 'ô': 'o'
+        'ã': 'a', 'õ': 'o', 'â': 'a', 'ê': 'e', 'ô': 'o', 'à': 'a'
     }
     for k, v in replacements.items():
         text = text.replace(k, v)
@@ -39,8 +39,7 @@ def normalize_text(text):
 def calculate_name_similarity(target_name, src_name):
     """
     İki isim arasındaki benzerlik puanını hesaplar.
-    "Mert Efe Künç" vs "Efe Künç" -> Yüksek Puan
-    "Mert Efe Künç" vs "Mert Künç" -> Yüksek Puan
+    Örn: "Mert Efe Künç" ile "Efe Künç" veya "Mert Künç" isimlerini eşleştirir.
     """
     t_norm = normalize_text(target_name)
     s_norm = normalize_text(src_name)
@@ -57,18 +56,16 @@ def calculate_name_similarity(target_name, src_name):
     if not t_tokens or not s_tokens:
         return 0.0
 
-    # Ortak kelime sayısı
     intersection = t_tokens.intersection(s_tokens)
     if not intersection:
         return 0.0
 
-    # Kaynaktaki tüm kelimeler hedefte varsa tam uyum kabul et
+    # Kaynaktaki tüm kelimeler (örn: Efe Künç) hedef isimde (Mert Efe Künç) geçiyorsa tam eşleştir
     if s_tokens.issubset(t_tokens):
         return 0.95
     if t_tokens.issubset(s_tokens):
         return 0.90
 
-    # Jaccard benzerlik skoru
     return len(intersection) / float(len(t_tokens.union(s_tokens)))
 
 def get_available_spreadsheets(creds_input):
@@ -124,6 +121,7 @@ class QAReportWorker:
         return None
 
     def get_target_worksheet(self, report_wb):
+        """Seçilen dil, ay ve yıla göre hedef sekmeyi bulur."""
         all_worksheets = report_wb.worksheets()
         target_lang = self.selected_lang.lower().strip()
         target_month = self.selected_month_str.lower().strip()
@@ -147,6 +145,7 @@ class QAReportWorker:
         return report_wb.sheet1
 
     def count_user_reports_in_sheet(self, sheet):
+        """Sekmedeki kullanıcı bazlı rapor sayılarını hesaplar."""
         raw_rows = sheet.get_all_values()
         if not raw_rows or len(raw_rows) <= 1:
             return Counter()
@@ -203,25 +202,27 @@ class QAReportWorker:
         source_worksheets = source_wb.worksheets()
         category_counts = {}
 
-        # 1. POR ve ESP İçin Tüm Sekmelerin Sütun Haritasını Çıkar
+        # 1. POR, ESP ve ENG Sekmelerini Türkçe Ana Tablo Sütunlarına Haritala
         for ws in source_worksheets:
             ws_title = ws.title.strip()
             title_lower = ws_title.lower()
 
-            if any(term in title_lower for term in ["0 kullanıcı", "0 kul", "new user test", "prueba de usuario nuevo"]):
+            # 0 Kullanıcı testi pas geçilir
+            if any(term in title_lower for term in ["0 kullanıcı", "0 kul", "new user test", "prueba de usuario nuevo", "teste de novo usuario"]):
                 self.log(f"🚫 Pas geçildi: [{ws_title}] (0 Kullanıcı Testi işlenmeyecek)")
                 continue
 
-            # ESP & POR sekmelerini Türkçe başlıklarla eşleştir
+            # Zula Pass / Görev Sekmeleri (POR: Cartão De Missão, ESP: Tarjeta de misión, ENG: Mission Card)
             target_col_name = ""
-            if any(term in title_lower for term in ["tarjeta de misión", "mission card", "zula pass", "g.görev", "pass", "missao"]):
+            if any(term in title_lower for term in ["cartao de missao", "tarjeta de mision", "mission card", "zula pass", "g.görev", "pass", "gunluk"]):
                 target_col_name = "Zula Pass"
-            elif any(term in title_lower for term in ["revisión general", "relatório de erros", "general check", "genel", "g.kontrol", "geral"]):
+            # Genel Kontrol Sekmeleri (POR: Verificação Geral, ESP: Revisión General, ENG: General Check / Verification)
+            elif any(term in title_lower for term in ["verificacao geral", "revision general", "relatorio de erros", "general check", "general verification", "genel", "g.kontrol"]):
                 target_col_name = "Genel"
             else:
                 target_col_name = ws_title
 
-            self.log(f"📊 Kaynak Sekme: [{ws_title}] ➔ Ana Tablo Sütun: '{target_col_name}'")
+            self.log(f"📊 Kaynak Sekme: [{ws_title}] ➔ Ana Tablo Türkçe Sütun: '{target_col_name}'")
             user_counts = self.count_user_reports_in_sheet(ws)
             
             if target_col_name not in category_counts:
@@ -251,7 +252,6 @@ class QAReportWorker:
                     col_index_map[cat_name] = idx
                     break
 
-        # Ana tablodaki kullanıcı isimlerini topla
         target_users = []
         for row_idx, row in enumerate(target_rows[1:], start=2):
             if row and user_col_in_target < len(row):
@@ -261,19 +261,17 @@ class QAReportWorker:
 
         cell_updates = []
         
-        # 2. Her Sütun ve Kullanıcı İçin En İyi Eşleşmeyi Hesapla
+        # 2. Tüm Kullanıcıları ve Sütunları Eşleştirip Ana Tabloya Yaz
         for cat_name, u_counts in category_counts.items():
             if cat_name not in col_index_map:
                 continue
                 
             target_c_idx = col_index_map[cat_name]
             
-            # Ana tablodaki her kullanıcı için kaynak verileri tarayarak puan topla
             for row_idx, t_name in target_users:
                 total_score = 0
                 for src_name, count in u_counts.items():
                     sim_score = calculate_name_similarity(t_name, src_name)
-                    # Benzerlik eşiği 0.50 ve üzeri ise eşleşmiş kabul et
                     if sim_score >= 0.50:
                         total_score += count
 
@@ -285,10 +283,10 @@ class QAReportWorker:
         self.progress(85)
 
         if cell_updates:
-            self.log(f"İsimler ve kategoriler eşleştirildi. Veriler [{target_sheet.title}] sekmesine aktarılıyor...")
+            self.log(f"Veriler eşleştirildi. Ana tablodaki [{target_sheet.title}] sekmesine aktarılıyor...")
             target_sheet.batch_update(cell_updates)
             self.progress(100)
-            self.log(f"✅ İŞLEM BAŞARILI! POR ve ESP verileri tüm sütunlara doğru şekilde yazıldı.")
+            self.log(f"✅ İŞLEM BAŞARILI! POR ve ENG sekmelerindeki veriler Türkçe sütunlara eksiksiz yazıldı.")
         else:
             self.progress(100)
-            self.log(f"⚠️ [{target_sheet.title}] sekmesinde işlenecek veri bulunamadı.")
+            self.log(f"⚠️ [{target_sheet.title}] sekmesinde eşleşen veri bulunamadı.")
