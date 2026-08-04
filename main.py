@@ -258,26 +258,30 @@ try:
     source_sheets_dict = sheets_data.get("source", sheets_data.get("all", {}))
     report_sheets_dict = sheets_data.get("report", sheets_data.get("all", {}))
     
+    # 1. KAYNAK TABLO (Source Sheet): İçinde "global perf" geçen tabloları SİLİYORUZ
+    filtered_source_dict = {
+        name: sheet_id for name, sheet_id in source_sheets_dict.items()
+        if "global perf" not in name.lower()
+    }
+    source_sheets_dict = filtered_source_dict
     source_options = list(source_sheets_dict.keys())
     
-    # Rapor Tablosunu sadece "Global Perf Tablosu" olacak şekilde filtreliyoruz
+    # 2. RAPOR TABLOSU (Report Sheet): SADECE "Global Perf" olanları tutuyoruz
     filtered_report_dict = {
         name: sheet_id for name, sheet_id in report_sheets_dict.items()
         if "global perf" in name.lower()
     }
 
-    # Eğer filtre sonucunda bulunursa onu alıyoruz, bulunamazsa orijinal listeden eşleşen arıyoruz
     if filtered_report_dict:
         report_sheets_dict = filtered_report_dict
         report_options = list(report_sheets_dict.keys())
     else:
         report_options = [k for k in report_sheets_dict.keys() if "global perf" in k.lower()]
         if not report_options and list(report_sheets_dict.keys()):
-            # Eğer tam isim tutmuyorsa listedeki ilk tabloyu "Global Perf Tablosu" olarak al
             report_options = [list(report_sheets_dict.keys())[0]]
 
     if not source_options:
-        st.warning("⚠️ Erişilebilir Google Sheet bulunamadı. Tabloları Service Account e-postası ile paylaştığınızdan emin olun.")
+        st.warning("⚠️ Erişilebilir Kaynak Sheet bulunamadı (Tümü filtrelenmiş veya yetki eksik). Tabloları Service Account e-postası ile paylaştığınızdan emin olun.")
         st.stop()
 
 except Exception as e:
