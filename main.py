@@ -14,18 +14,27 @@ st.title("📊 QA Görev Raporlama Paneli")
 st.caption("Google Sheets verilerini seçilen Ay ve Yıl'a göre otomatik eşleştirin ve güncelleyin.")
 
 # --- GOOGLE CREDENTIALS YÖNETİMİ ---
-# 1. Yerel modda 'credentials.json' okur.
-# 2. Streamlit Cloud'da 'st.secrets' üzerinden okur.
 JSON_PATH = "credentials.json"
 
 @st.cache_resource
 def setup_credentials():
+    # 1. Streamlit Cloud Secrets Kontrolü
     if "GOOGLE_CREDENTIALS" in st.secrets:
-        # Streamlit Cloud üzerinde Secrets kullanılıyorsa temp json oluştur
-        creds_dict = dict(st.secrets["GOOGLE_CREDENTIALS"])
-        with open("temp_credentials.json", "w") as f:
-            json.dump(creds_dict, f)
-        return "temp_credentials.json"
+        try:
+            creds_dict = dict(st.secrets["GOOGLE_CREDENTIALS"])
+            
+            # PEM Hatasını Çözen Kısım: \n karakterlerini gerçek alt satıra dönüştürür
+            if "private_key" in creds_dict:
+                creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+                
+            with open("temp_credentials.json", "w", encoding="utf-8") as f:
+                json.dump(creds_dict, f)
+            return "temp_credentials.json"
+        except Exception as e:
+            st.error(f"Secrets okunurken hata oluştu: {e}")
+            return None
+            
+    # 2. Yerel Dosya Kontrolü
     elif os.path.exists(JSON_PATH):
         return JSON_PATH
     else:
@@ -34,7 +43,7 @@ def setup_credentials():
 active_json_path = setup_credentials()
 
 if not active_json_path:
-    st.error("❌ 'credentials.json' dosyası bulunamadı! Lütfen yerel dizine ekleyin veya Streamlit Secrets alanına tanımlayın.")
+    st.error("❌ Google bağlantı bilgileri yüklenemedi! Lütfen Secrets ayarlarını kontrol edin.")
     st.stop()
 
 # --- TABLOLARI LİSTELE ---
@@ -72,7 +81,6 @@ if submit_button:
     report_id = spreadsheet_dict[report_name]
 
     progress_bar = st.progress(0)
-    status_text = st.empty()
     log_box = st.code("> İşlem başlatıldı...\n", language="bash")
 
     logs_list = []
