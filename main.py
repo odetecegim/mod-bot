@@ -1,110 +1,101 @@
+import os
+import json
 import streamlit as st
-import datetime
 from backend import QAReportWorker, get_available_spreadsheets
 
-st.set_page_config(page_title="Rapor Eşleştirme Paneli", layout="wide")
+# Sayfa Yapılandırması
+st.set_page_config(
+    page_title="QA Raporlama Paneli",
+    page_icon="📊",
+    layout="centered"
+)
 
-st.title("📊 QA Raporu Otomatik İşleme Paneli")
-st.caption("Google Sheets verilerini seçilen Dil, Ay ve Yıl'a göre tam eşleşmeyle güncelleyin.")
+st.title("📊 QA Görev Raporlama Paneli")
+st.caption("Google Sheets verilerini seçilen Ay ve Yıl'a göre otomatik eşleştirin ve güncelleyin.")
 
-# Creds / Bağlantı Yükleme (Streamlit Secrets veya Local credentials.json)
-creds_data = st.secrets["gcp_service_account"] if "gcp_service_account" in st.secrets else "credentials.json"
+# --- GOOGLE CREDENTIALS YÖNETİMİ ---
+# 1. Yerel modda 'credentials.json' okur.
+# 2. Streamlit Cloud'da 'st.secrets' üzerinden okur.
+JSON_PATH = "credentials.json"
 
-# Tabloları Çek
-sheets_dict = get_available_spreadsheets(creds_data)
+@st.cache_resource
+def setup_credentials():
+    if "GOOGLE_CREDENTIALS" in st.secrets:
+        # Streamlit Cloud üzerinde Secrets kullanılıyorsa temp json oluştur
+        creds_dict = dict(st.secrets["GOOGLE_CREDENTIALS"])
+        with open("temp_credentials.json", "w") as f:
+            json.dump(creds_dict, f)
+        return "temp_credentials.json"
+    elif os.path.exists(JSON_PATH):
+        return JSON_PATH
+    else:
+        return None
 
-# Hata Kontrolü ve Detaylı Bilgilendirme
-if "error" in sheets_dict:
-    st.error(f"❌ Google Sheets Bağlantı Hatası: {sheets_dict['error']}")
-    st.info("💡 Lütfen `credentials.json` dosyanızı veya Streamlit Secrets (`[gcp_service_account]`) ayarlarınızı kontrol edin.")
+active_json_path = setup_credentials()
+
+if not active_json_path:
+    st.error("❌ 'credentials.json' dosyası bulunamadı! Lütfen yerel dizine ekleyin veya Streamlit Secrets alanına tanımlayın.")
     st.stop()
 
-all_options = list(sheets_dict.get("all", {}).keys())
-
-if not all_options:
-    st.warning("⚠️ Google Sheets bağlantısı başarılı fakat erişilebilen hiç tablo bulunamadı.")
-    st.info("💡 Lütfen işlem yapacağınız Google Sheets tablolarını Service Account e-postanız ile **Paylaş (Share)** kısmından Düzenleyen (Editor) olarak paylaşın.")
+# --- TABLOLARI LİSTELE ---
+try:
+    spreadsheet_dict = get_available_spreadsheets(active_json_path)
+    sheet_names = list(spreadsheet_dict.keys())
+except Exception as e:
+    st.error(f"Google Drive bağlantı hatası: {e}")
     st.stop()
 
-# Dil Sekmeleri Paneli
-tab_eng, tab_por, tab_esp, tab_tr = st.tabs([
-    "🇬🇧 ENG Raporu", 
-    "🇵🇹 POR Raporu", 
-    "🇪🇸 ESP Raporu", 
-    "🇹🇷 TR Raporu"
-])
-
-MONTHS = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
-YEARS = [2024, 2025, 2026, 2027]
-
-def render_language_panel(lang_code):
+# --- FORM ARAYÜZÜ ---
+with st.form("qa_form"):
     col1, col2 = st.columns(2)
     
-    # Varsayılan tablo seçimi
-    default_src = next((s for s in all_options if lang_code in s.upper()), all_options[0])
-    default_rep = next((s for s in all_options if "PERF" in s.upper() or "GLOBAL" in s.upper()), all_options[0])
-
     with col1:
-        source_name = st.selectbox(
-            f"Kaynak Tablo ({lang_code})", 
-            all_options, 
-            index=all_options.index(default_src),
-            key=f"src_{lang_code}"
-        )
+        source_name = st.selectbox("Kaynak Tablo (Source Sheet)", options=sheet_names)
     with col2:
-        report_name = st.selectbox(
-            f"Rapor Tablosu ({lang_code})", 
-            all_options, 
-            index=all_options.index(default_rep),
-            key=f"rep_{lang_code}"
-        )
+        report_name = st.selectbox("Rapor Tablosu (Report Sheet)", options=sheet_names)
 
-    col3, col4 = st.columns(2)
+    col3, col4, col5 = st.columns(3)
+    
     with col3:
-        selected_month = st.selectbox("Ay", MONTHS, index=6, key=f"month_{lang_code}") # Temmuz
+        selected_lang = st.selectbox("Dil", ["Tümü", "ENG", "ESP", "POR", "TR"])
     with col4:
-        selected_year = st.selectbox("Yıl", YEARS, index=2, key=f"year_{lang_code}")   # 2026
+        months = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
+        selected_month = st.selectbox("Ay", months, index=6) # Varsayılan: Temmuz
+    with col5:
+        selected_year = st.selectbox("Yıl", ["2025", "2026", "2027"], index=1)
 
-    if st.button(f"🚀 {lang_code} Raporunu Güncelle", use_container_width=True, key=f"btn_{lang_code}"):
-        source_id = sheets_dict["all"][source_name]
-        report_id = sheets_dict["all"][report_name]
+    submit_button = st.form_submit_button("🚀 Raporu Güncelle", use_container_width=True)
 
-        log_container = st.empty()
-        progress_bar = st.progress(0)
+# --- İŞLEM BAŞLATMA VE LOG EKRANI ---
+if submit_button:
+    source_id = spreadsheet_dict[source_name]
+    report_id = spreadsheet_dict[report_name]
 
-        logs = []
-        def append_log(msg):
-            logs.append(msg)
-            log_container.code("\n".join(logs), language="bash")
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    log_box = st.code("> İşlem başlatıldı...\n", language="bash")
 
-        def update_progress(val):
-            progress_bar.progress(val)
+    logs_list = []
 
+    def log_callback(msg):
+        logs_list.append(f"> {msg}")
+        log_box.code("\n".join(logs_list), language="bash")
+
+    def progress_callback(val):
+        progress_bar.progress(val)
+
+    try:
         worker = QAReportWorker(
-            creds_input=creds_data,
+            json_path=active_json_path,
             source_id=source_id,
             report_id=report_id,
-            selected_lang=lang_code,
+            selected_lang=selected_lang,
             selected_year=selected_year,
             selected_month=selected_month,
-            log_callback=append_log,
-            progress_callback=update_progress
+            log_callback=log_callback,
+            progress_callback=progress_callback
         )
-
-        try:
-            worker.process()
-            st.success(f"✅ {lang_code} işlemi tamamlandı!")
-        except Exception as e:
-            st.error(f"❌ İşlem sırasında hata oluştu: {str(e)}")
-
-with tab_eng:
-    render_language_panel("ENG")
-
-with tab_por:
-    render_language_panel("POR")
-
-with tab_esp:
-    render_language_panel("ESP")
-
-with tab_tr:
-    render_language_panel("TR")
+        worker.process()
+        st.success("✅ Rapor başarıyla güncellendi!")
+    except Exception as e:
+        st.error(f"❌ İşlem sırasında bir hata oluştu: {str(e)}")
