@@ -16,6 +16,7 @@ st.set_page_config(
 def login_screen():
     st.markdown("""
         <style>
+            /* ZULA ARKA PLAN LOGOSU VE KARARTMA */
             .stApp {
                 background: linear-gradient(rgba(10, 10, 12, 0.88), rgba(10, 10, 12, 0.95)),
                             url('https://images.alphacoders.com/849/849204.png') no-repeat center center fixed !important;
@@ -33,6 +34,7 @@ def login_screen():
                 max-width: 480px !important;
             }
 
+            /* İKON KUTUSU */
             .icon-box {
                 background: linear-gradient(135deg, #dc2626 0%, #7f1d1d 100%);
                 width: 90px;
@@ -53,6 +55,7 @@ def login_screen():
                 object-fit: contain;
             }
 
+            /* BAŞLIKLAR */
             .title-text {
                 text-align: center;
                 font-size: 28px;
@@ -71,6 +74,7 @@ def login_screen():
                 margin-bottom: 1.8rem;
             }
 
+            /* GİRİŞ KART-FORMU */
             div[data-testid="stForm"] {
                 background: rgba(18, 18, 22, 0.85) !important;
                 border: 1px solid rgba(220, 38, 38, 0.3) !important;
@@ -80,6 +84,7 @@ def login_screen():
                 backdrop-filter: blur(10px);
             }
 
+            /* INPUT VE ETİKET */
             label {
                 color: #ef4444 !important;
                 font-size: 11px !important;
@@ -98,6 +103,7 @@ def login_screen():
                 box-shadow: 0 0 10px rgba(239, 68, 68, 0.4) !important;
             }
 
+            /* BUTON */
             div[data-testid="stFormSubmitButton"] > button {
                 background: linear-gradient(90deg, #dc2626 0%, #991b1b 100%) !important;
                 color: white !important;
@@ -117,6 +123,7 @@ def login_screen():
                 background: linear-gradient(90deg, #ef4444 0%, #dc2626 100%) !important;
             }
 
+            /* ALT BİLGİ METNİ */
             .footer-text {
                 text-align: center;
                 font-size: 12px;
@@ -129,6 +136,7 @@ def login_screen():
             }
         </style>
 
+        <!-- MOUSE TAKİP EDEN KIRMIZI YILDIZ EFEKTİ -->
         <script>
             document.addEventListener('mousemove', function(e) {
                 let star = document.createElement('div');
@@ -252,6 +260,7 @@ try:
     sheets_data = get_available_spreadsheets(creds_input)
     source_sheets_dict = sheets_data["source"]
     report_sheets_dict = sheets_data["report"]
+    all_sheets_dict = sheets_data["all"]
     
     source_options = list(source_sheets_dict.keys())
     report_options = list(report_sheets_dict.keys())
@@ -273,7 +282,7 @@ with st.form("qa_form"):
     with col3:
         selected_lang = st.selectbox("Dil", ["Tümü", "ENG", "ESP", "POR", "TR"])
     with col4:
-        months = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
+        months = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylul", "Ekim", "Kasım", "Aralık"]
         selected_month = st.selectbox("Ay", months, index=6)
     with col5:
         selected_year = st.selectbox("Yıl", ["2025", "2026", "2027"], index=1)
