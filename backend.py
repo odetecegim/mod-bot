@@ -1,4 +1,6 @@
 import datetime
+import re
+from collections import Counter
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -9,13 +11,12 @@ SCOPES = [
 
 MONTH_MAP = {
     "ocak": 1, "şubat": 2, "mart": 3, "nisan": 4, "mayıs": 5, "haziran": 6,
-    "temmuz": 7, "ağustos": 8, "eylül": 9, "ekim": 10, "kasım": 11, "aralık": 12
+    "temmuz": 7, "ağustos": 8, "eylül": 9, "ekim": 10, "kasım": 11, "aralık": 12,
+    "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
+    "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12
 }
 
 def get_available_spreadsheets(creds_input):
-    """
-    Drive üzerindeki tüm tabloları getirir.
-    """
     if isinstance(creds_input, dict):
         creds = Credentials.from_service_account_info(creds_input, scopes=SCOPES)
     else:
@@ -23,7 +24,6 @@ def get_available_spreadsheets(creds_input):
     
     client = gspread.authorize(creds)
     files = client.list_spreadsheet_files()
-    
     all_sheets = {f['name']: f['id'] for f in files}
 
     return {
@@ -52,55 +52,45 @@ class QAReportWorker:
         return gspread.authorize(creds)
 
     def parse_date(self, date_val):
-        """Çeşitli tarih biçimlerini ayrıştırır."""
+        """Tarih bilgisini çözümler."""
         if not date_val:
             return None
         date_str = str(date_val).strip()
+        clean_date = re.split(r'\s+', date_str)[0]
+        
         for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d.%m.%y", "%d/%m/%y"):
             try:
-                return datetime.datetime.strptime(date_str, fmt)
+                return datetime.datetime.strptime(clean_date, fmt)
             except ValueError:
                 continue
         return None
 
-    def make_signature(self, row_values):
-        """Satır imzası oluşturan fonksiyon."""
-        return "||".join([str(val).strip().lower() for val in row_values if str(val).strip()])
-
     def get_target_worksheet(self, report_wb):
-        """
-        Görseldeki sekme formatına (örn: 'ENG Temmuz 2026') göre en uygun sekkeyi bulur.
-        """
+        """İlgili Dil + Ay + Yıl sekmesini bulur (örn: ESP Temmuz 2026)."""
         all_worksheets = report_wb.worksheets()
         
         target_lang = self.selected_lang.lower().strip()
         target_month = self.selected_month_str.lower().strip()
         target_year = str(self.selected_year).strip()
 
-        # 1. Öncelik: Sekme adında Dil + Ay + Yıl'ın hepsi geçiyor mu? (Örn: "ENG Temmuz 2026")
+        # 1. Tam Eşleşme (Örn: "ESP Temmuz 2026")
         for ws in all_worksheets:
-            title_lower = ws.title.lower().strip()
-            if target_lang in title_lower and target_month in title_lower and target_year in title_lower:
+            t_lower = ws.title.lower().strip()
+            if target_lang in t_lower and target_month in t_lower and target_year in t_lower:
                 return ws
 
-        # 2. Öncelik: Sekme adında Dil + Ay geçiyor mu? (Örn: "ENG Temmuz")
+        # 2. Dil + Ay (Örn: "ESP Temmuz")
         for ws in all_worksheets:
-            title_lower = ws.title.lower().strip()
-            if target_lang in title_lower and target_month in title_lower:
+            t_lower = ws.title.lower().strip()
+            if target_lang in t_lower and target_month in t_lower:
                 return ws
 
-        # 3. Öncelik: Sadece Dil adı geçiyor mu? (Örn: "ENG")
+        # 3. Sadece Dil sekmesi (Örn: "ESP")
         for ws in all_worksheets:
-            title_lower = ws.title.lower().strip()
-            if target_lang in title_lower:
+            t_lower = ws.title.lower().strip()
+            if target_lang in t_lower:
                 return ws
 
-        # 4. Öncelik: Form Yanıtları dışındaki ilk sekme
-        for ws in all_worksheets:
-            if not any(form_kw in ws.title.lower() for form_kw in ["form yanıtları", "form responses"]):
-                return ws
-
-        # Son çare
         return report_wb.sheet1
 
     def process(self):
@@ -108,9 +98,6 @@ class QAReportWorker:
         self.progress(10)
         client = self.connect()
 
-        self.log("Dosyalar açılıyor...")
-        self.progress(20)
-        
         source_wb = client.open_by_key(self.source_id)
         source_sheet = source_wb.sheet1
 
@@ -118,10 +105,9 @@ class QAReportWorker:
         report_sheet = self.get_target_worksheet(report_wb)
 
         self.log(f"Kaynak: [{source_wb.title}] ➔ Hedef Sekme: [{report_sheet.title}]")
-        self.progress(35)
+        self.progress(30)
         
         raw_source_rows = source_sheet.get_all_values()
-        existing_report_rows = report_sheet.get_all_values()
 
         if not raw_source_rows or len(raw_source_rows) <= 1:
             self.log("⚠️ Kaynak tabloda işlenecek veri bulunamadı.")
@@ -131,63 +117,72 @@ class QAReportWorker:
         headers = [str(h).strip().lower() for h in raw_source_rows[0]]
         data_rows = raw_source_rows[1:]
 
-        # Tarih sütununu bul
+        # Tarih ve Kullanıcı sütunlarının indeksini tespit et
         date_col_idx = -1
+        user_col_idx = -1
+
         for idx, h in enumerate(headers):
             if any(t in h for t in ["tarih", "date", "fecha", "data", "day", "gün", "timestamp", "zaman damgası"]):
                 date_col_idx = idx
-                break
+            elif any(u in h for u in ["kullanıcı", "kullanici", "user", "reporter", "nombre", "person", "ad", "isim", "qa"]):
+                user_col_idx = idx
 
-        # Hedef sekmekdeki mevcut verileri oku (Mükerrer eklemeyi engellemek için)
-        existing_signatures = set()
-        for row in existing_report_rows:
-            sig = self.make_signature(row)
-            if sig:
-                existing_signatures.add(sig)
+        # Kullanıcı sütunu özel bulunamadıysa E-posta veya 2. Sütunu varsayılan yap
+        if user_col_idx == -1:
+            for idx, h in enumerate(headers):
+                if any(u in h for u in ["mail", "email", "posta"]):
+                    user_col_idx = idx
+                    break
+            if user_col_idx == -1 and len(headers) > 1:
+                user_col_idx = 1  # Varsayılan olarak 2. sütunu kullanıcı kabul et
 
-        self.log(f"Hedef Sekmede [{report_sheet.title}] {len(existing_signatures)} mevcut kayıt tarandı.")
         self.progress(50)
+        self.log(f"{self.selected_month_str} {self.selected_year} ayı kullanıcı rapor sayıları hesaplanıyor...")
 
-        self.log(f"Veriler filtreleniyor... (Filtre: Yıl={self.selected_year}, Ay={self.selected_month_str})")
-        
-        rows_to_insert = []
-        duplicate_count = 0
-        filtered_out_date_count = 0
+        user_counts = Counter()
 
         for row_vals in data_rows:
             if not any(row_vals):
                 continue
 
-            # Tarih Kontrolü
+            # Tarih Filtresi Kontrolü
             if date_col_idx != -1 and date_col_idx < len(row_vals):
                 date_val = row_vals[date_col_idx]
                 dt = self.parse_date(date_val)
-                if dt:
-                    if dt.year != self.selected_year or dt.month != self.selected_month_num:
-                        filtered_out_date_count += 1
-                        continue
+                if not dt or dt.year != self.selected_year or dt.month != self.selected_month_num:
+                    continue
 
-            # Mükerrer Kayıt Kontrolü
-            row_sig = self.make_signature(row_vals)
-            if row_sig in existing_signatures:
-                duplicate_count += 1
-                continue
+            # Kullanıcı Adını Al ve Say
+            user_name = "Bilinmeyen Kullanıcı"
+            if user_col_idx != -1 and user_col_idx < len(row_vals):
+                val = str(row_vals[user_col_idx]).strip()
+                if val:
+                    user_name = val
 
-            rows_to_insert.append(row_vals)
-            existing_signatures.add(row_sig)
+            user_counts[user_name] += 1
 
-        self.progress(75)
-        self.log(f"Sonuç: {len(rows_to_insert)} yeni satır hazır ({duplicate_count} mükerrer atlandı, {filtered_out_date_count} satır tarih filtresine takıldı).")
+        self.progress(80)
 
-        # Hedef Sekmeye Aktarım
-        if rows_to_insert:
-            self.log(f"Veriler [{report_sheet.title}] sekmesine yazılıyor...")
-            report_sheet.append_rows(rows_to_insert)
+        if not user_counts:
             self.progress(100)
-            self.log(f"✅ İŞLEM BAŞARILI! Veriler doğrudan [{report_sheet.title}] sekmesine eklendi.")
-        else:
-            self.progress(100)
-            if duplicate_count > 0:
-                self.log(f"⚠️ Veriler zaten [{report_sheet.title}] sekmesinde mevcut.")
-            else:
-                self.log("⚠️ Seçilen filtrelere uyan yeni veri bulunamadı.")
+            self.log(f"⚠️ {self.selected_month_str} {self.selected_year} ayına ait hiçbir kullanıcı raporu bulunamadı.")
+            return
+
+        # Hesaplanan veriyi ana tablo formatına hazırla (Kullanıcı Adı, Rapor Sayısı)
+        summary_rows = []
+        for user, count in user_counts.items():
+            summary_rows.append([user, count])
+
+        self.log(f"Hesaplandı: Toplam {len(summary_rows)} farklı kullanıcı için rapor sayıları aktarılıyor...")
+
+        # Hedef Sekmenin İçeriğini Temizle ve Güncel Hesaplamaları Yaz
+        report_sheet.clear()
+        
+        # Başlık Satırı ve Hesaplanan Kullanıcı Rapor Sayıları
+        header_row = ["Kullanıcı Adı / QA", f"Rapor Sayısı ({self.selected_month_str} {self.selected_year})"]
+        all_data_to_write = [header_row] + summary_rows
+
+        report_sheet.append_rows(all_data_to_write)
+
+        self.progress(100)
+        self.log(f"✅ İŞLEM BAŞARILI! {self.selected_month_str} {self.selected_year} ayına ait kullanıcı rapor sayıları [{report_sheet.title}] sekmesine işlendi.")
