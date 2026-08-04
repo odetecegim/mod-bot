@@ -10,8 +10,8 @@ ONE_HOUR_SECONDS = 3600
 
 # Sayfa Yapılandırması
 st.set_page_config(
-    page_title="Control Center — QA Teşkilat Girişi",
-    page_icon="🔴",
+    page_title="QA Control Center — Giriş",
+    page_icon="⚡",
     layout="centered",
     initial_sidebar_state="collapsed"
 )
@@ -34,131 +34,141 @@ def check_session_timeout():
 
 check_session_timeout()
 
-# --- ŞİFRE VE OTURUM KONTROLÜ (ZULA TEŞKİLAT TEMASI) ---
+# --- YENİ MODERN GİRİŞ ARAYÜZÜ ---
 def login_screen():
     st.markdown("""
         <style>
+            /* Arka Plan Gradient & Efekt */
             .stApp {
-                background: linear-gradient(rgba(10, 10, 12, 0.88), rgba(10, 10, 12, 0.95)),
-                            url('https://images.alphacoders.com/849/849204.png') no-repeat center center fixed !important;
-                background-size: cover !important;
+                background: radial-gradient(circle at 50% 30%, #1e1e2d 0%, #0d0d15 100%) !important;
             }
 
-            .main {
-                display: flex;
-                justify-content: center;
-                align-items: center;
-            }
             .block-container {
-                padding-top: 2rem !important;
+                padding-top: 4rem !important;
                 padding-bottom: 2rem !important;
-                max-width: 480px !important;
+                max-width: 440px !important;
             }
 
-            .icon-box {
-                background: linear-gradient(135deg, #dc2626 0%, #7f1d1d 100%);
-                width: 90px;
-                height: 90px;
-                border-radius: 22px;
+            /* Logo & Rozet Alanı */
+            .badge-box {
+                background: rgba(239, 68, 68, 0.1);
+                border: 1px solid rgba(239, 68, 68, 0.3);
+                border-radius: 50px;
+                padding: 6px 16px;
+                width: fit-content;
+                margin: 0 auto 1rem auto;
                 display: flex;
                 align-items: center;
-                justify-content: center;
-                margin: 0 auto 1.2rem auto;
-                box-shadow: 0 0 35px rgba(220, 38, 38, 0.6);
-                border: 2px solid #ef4444;
-                overflow: hidden;
-                padding: 10px;
+                gap: 8px;
             }
-            .icon-box img {
-                width: 100%;
-                height: 100%;
-                object-fit: contain;
+            .badge-dot {
+                width: 8px;
+                height: 8px;
+                background-color: #ef4444;
+                border-radius: 50%;
+                box-shadow: 0 0 10px #ef4444;
+            }
+            .badge-text {
+                color: #f87171;
+                font-size: 11px;
+                font-weight: 700;
+                letter-spacing: 1.5px;
+                text-transform: uppercase;
             }
 
+            /* Başlık Stilleri */
             .title-text {
                 text-align: center;
-                font-size: 28px;
+                font-size: 26px;
                 font-weight: 800;
                 color: #ffffff;
-                letter-spacing: 1px;
-                text-shadow: 0 0 10px rgba(220, 38, 38, 0.5);
-                margin-bottom: 4px;
-                font-family: 'Arial Black', sans-serif;
+                letter-spacing: -0.5px;
+                margin-bottom: 6px;
+                font-family: 'Inter', system-ui, -apple-system, sans-serif;
             }
             .subtitle-text {
                 text-align: center;
                 font-size: 13px;
-                color: #9ca3af;
-                letter-spacing: 0.5px;
-                margin-bottom: 1.8rem;
+                color: #94a3b8;
+                margin-bottom: 2rem;
             }
 
+            /* Glassmorphism Form Kartı */
             div[data-testid="stForm"] {
-                background: rgba(18, 18, 22, 0.85) !important;
-                border: 1px solid rgba(220, 38, 38, 0.3) !important;
-                border-radius: 16px !important;
-                padding: 2rem !important;
-                box-shadow: 0 15px 35px rgba(0, 0, 0, 0.8), 0 0 15px rgba(220, 38, 38, 0.15) !important;
-                backdrop-filter: blur(10px);
+                background: rgba(22, 22, 34, 0.75) !important;
+                border: 1px solid rgba(255, 255, 255, 0.08) !important;
+                border-radius: 20px !important;
+                padding: 2.2rem 2rem !important;
+                box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
+                backdrop-filter: blur(16px);
             }
 
+            /* Input Alanları */
             label {
-                color: #ef4444 !important;
-                font-size: 11px !important;
-                font-weight: 800 !important;
-                letter-spacing: 0.1em !important;
-                text-transform: uppercase !important;
+                color: #cbd5e1 !important;
+                font-size: 12px !important;
+                font-weight: 600 !important;
+                letter-spacing: 0.5px !important;
+                margin-bottom: 6px !important;
             }
             div[data-baseweb="input"] {
-                background-color: #0d0d11 !important;
-                border: 1px solid #27272a !important;
-                border-radius: 8px !important;
+                background-color: rgba(13, 13, 21, 0.8) !important;
+                border: 1px solid rgba(255, 255, 255, 0.1) !important;
+                border-radius: 12px !important;
                 color: #ffffff !important;
+                transition: all 0.3s ease !important;
             }
             div[data-baseweb="input"]:focus-within {
                 border-color: #ef4444 !important;
-                box-shadow: 0 0 10px rgba(239, 68, 68, 0.4) !important;
+                box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.25) !important;
             }
 
+            /* Buton Stili */
             div[data-testid="stFormSubmitButton"] > button {
-                background: linear-gradient(90deg, #dc2626 0%, #991b1b 100%) !important;
-                color: white !important;
-                border: 1px solid #f87171 !important;
-                border-radius: 8px !important;
-                height: 50px !important;
+                background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%) !important;
+                color: #ffffff !important;
+                border: none !important;
+                border-radius: 12px !important;
+                height: 48px !important;
                 font-weight: 700 !important;
-                font-size: 16px !important;
-                letter-spacing: 1px !important;
-                text-transform: uppercase !important;
-                box-shadow: 0 4px 20px rgba(220, 38, 38, 0.4) !important;
-                transition: all 0.2s ease !important;
+                font-size: 15px !important;
+                letter-spacing: 0.5px !important;
+                box-shadow: 0 8px 20px rgba(239, 68, 68, 0.35) !important;
+                transition: all 0.2s ease-in-out !important;
+                margin-top: 10px !important;
             }
             div[data-testid="stFormSubmitButton"] > button:hover {
                 transform: translateY(-2px);
-                box-shadow: 0 6px 25px rgba(220, 38, 38, 0.7) !important;
-                background: linear-gradient(90deg, #ef4444 0%, #dc2626 100%) !important;
+                box-shadow: 0 12px 25px rgba(239, 68, 68, 0.5) !important;
+                background: linear-gradient(135deg, #f87171 0%, #ef4444 100%) !important;
             }
 
+            /* Alt Bilgi */
             .footer-text {
                 text-align: center;
                 font-size: 12px;
-                color: #6b7280;
-                margin-top: 1.5rem;
+                color: #64748b;
+                margin-top: 1.8rem;
             }
-            .footer-text span {
-                color: #ef4444;
-                font-weight: 700;
+            .footer-text strong {
+                color: #94a3b8;
             }
         </style>
     """, unsafe_allow_html=True)
 
-    st.markdown('<div class="icon-box"><img src="https://i.ibb.co/JRkyN71r/logo.png" alt="Teşkilat Logo"></div>', unsafe_allow_html=True)
-    st.markdown('<div class="title-text">TEŞKİLAT CONTROL CENTER</div>', unsafe_allow_html=True)
-    st.markdown('<div class="subtitle-text">Yetkili Yönetici Girişi</div>', unsafe_allow_html=True)
+    st.markdown("""
+        <div class="badge-box">
+            <div class="badge-dot"></div>
+            <div class="badge-text">QA CONTROL CENTER</div>
+        </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown('<div class="title-text">Yönetici Portalı</div>', unsafe_allow_html=True)
+    st.markdown('<div class="subtitle-text">Devam etmek için güvenli şifrenizi girin</div>', unsafe_allow_html=True)
 
     with st.form("login_form"):
-        password_input = st.text_input("YÖNETİCİ ŞİFRESİ", type="password", placeholder="••••••••••••")
-        submit = st.form_submit_button("🎯 ONAYLA VE GİRİŞ YAP", use_container_width=True)
+        password_input = st.text_input("GİRİŞ ŞİFRESİ", type="password", placeholder="••••••••••••")
+        submit = st.form_submit_button("Sisteme Giriş Yap →", use_container_width=True)
 
         if submit:
             admin_pass = st.secrets.get("ADMIN_PASSWORD", "akademi2026")
@@ -167,9 +177,9 @@ def login_screen():
                 st.session_state["login_time"] = time.time()
                 st.rerun()
             else:
-                st.error("❌ Yetkisiz Giriş! Şifre Hatalı.")
+                st.error("❌ Hatalı Şifre! Lütfen tekrar deneyin.")
 
-    st.markdown('<div class="footer-text">Oturum <span>1 saat</span> boyunca aktif kalır</div>', unsafe_allow_html=True)
+    st.markdown('<div class="footer-text">🔒 Oturum süresi: <strong>1 Saat</strong></div>', unsafe_allow_html=True)
 
 # Oturum Doğrulama Kontrolü
 if not st.session_state.get("authenticated", False) or st.session_state.get("login_time") is None:
@@ -258,7 +268,7 @@ try:
     source_sheets_dict = sheets_data.get("source", sheets_data.get("all", {}))
     report_sheets_dict = sheets_data.get("report", sheets_data.get("all", {}))
     
-    # 1. KAYNAK TABLO (Source Sheet): İçinde "global perf" geçen tabloları SİLİYORUZ
+    # 1. KAYNAK TABLO (Source Sheet): İçinde "global perf" geçen tabloları siliyoruz
     filtered_source_dict = {
         name: sheet_id for name, sheet_id in source_sheets_dict.items()
         if "global perf" not in name.lower()
@@ -266,7 +276,7 @@ try:
     source_sheets_dict = filtered_source_dict
     source_options = list(source_sheets_dict.keys())
     
-    # 2. RAPOR TABLOSU (Report Sheet): SADECE "Global Perf" olanları tutuyoruz
+    # 2. RAPOR TABLOSU (Report Sheet): Sadece "Global Perf" olanları tutuyoruz
     filtered_report_dict = {
         name: sheet_id for name, sheet_id in report_sheets_dict.items()
         if "global perf" in name.lower()
@@ -300,12 +310,12 @@ with st.form("qa_form"):
     col3, col4, col5 = st.columns(3)
     
     with col3:
-        selected_lang = st.selectbox("Dil", [, "ENG", "ESP", "POR",])
+        selected_lang = st.selectbox("Dil", ["Tümü", "ENG", "ESP", "POR"])
     with col4:
         months = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylul", "Ekim", "Kasım", "Aralık"]
         selected_month = st.selectbox("Ay", months, index=6)
     with col5:
-        selected_year = st.selectbox("Yıl", ["2026", "2027"], index=1)
+        selected_year = st.selectbox("Yıl", ["2025", "2026", "2027"], index=1)
 
     submit_button = st.form_submit_button("🚀 Raporu Güncelle", use_container_width=True)
 
