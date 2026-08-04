@@ -14,8 +14,10 @@ MONTH_MAP = {
 
 def get_available_spreadsheets(creds_input):
     """
-    Drive üzerindeki tüm tabloları getirir ve 'Kaynak' ile 'Rapor' olarak kategorize eder.
-    İsminde 'Rapor' veya 'Report' geçenler Rapor Tablosu, diğerleri Kaynak Tablo olarak ayrılır.
+    Drive üzerindeki tüm tabloları getirir.
+    Rapor ve Kaynak tablolarını ayrıştırır:
+    - Adında 'rapor', 'report' veya 'relatório' (Relatório de erros POR vb.) geçenler -> Rapor Tablosu
+    - Diğer ana takip dosyaları -> Kaynak Tablo
     """
     if isinstance(creds_input, dict):
         creds = Credentials.from_service_account_info(creds_input, scopes=SCOPES)
@@ -27,13 +29,20 @@ def get_available_spreadsheets(creds_input):
     
     all_sheets = {f['name']: f['id'] for f in files}
     
-    # Isminde 'rapor' veya 'report' gecenleri Rapor Tablosu olarak filtrele
-    report_sheets = {name: fid for name, fid in all_sheets.items() if "rapor" in name.lower() or "report" in name.lower()}
-    
-    # Isminde 'rapor' gecmeyenleri Kaynak Tablo olarak filtrele
-    source_sheets = {name: fid for name, fid in all_sheets.items() if name not in report_sheets}
-    
-    # Eger hic ayrısım yapılamazsa (isim kuralına uyulmadıysa) tum listeleri fallback olarak döndür
+    report_sheets = {}
+    source_sheets = {}
+
+    # Rapor kelimesi içeren anahtar kelimeler (TR, ENG, POR)
+    report_keywords = ["rapor", "report", "relatório", "relatorio"]
+
+    for name, fid in all_sheets.items():
+        name_lower = name.lower()
+        if any(keyword in name_lower for keyword in report_keywords):
+            report_sheets[name] = fid
+        else:
+            source_sheets[name] = fid
+
+    # Güvenlik önlemleri
     if not report_sheets:
         report_sheets = all_sheets.copy()
     if not source_sheets:
@@ -89,4 +98,4 @@ class QAReportWorker:
 
         self.log("Rapor tablosu güncelleniyor...")
         self.progress(100)
-        self.log("İşlem tamamlandı!")
+        self.log("İşlem başarıyla tamamlandı!")
