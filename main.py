@@ -46,7 +46,7 @@ def login_screen():
                 background: radial-gradient(circle at center, #2a2d34 0%, #121316 60%, #08080a 100%) !important;
             }}
 
-            /* Dikey Hizalama Ayarı ve Zula Arka Plan Logosu */
+            /* Dikey Hizalama ve Konumlandırma Ayarları */
             html, body, [data-testid="stAppViewContainer"] {{
                 height: 100vh;
                 margin: 0;
@@ -60,19 +60,20 @@ def login_screen():
                 height: 100vh;
                 display: flex;
                 flex-direction: column;
-                justify-content: center;
+                justify-content: flex-end; /* İçeriği alt tarafa yaklaştırır */
+                padding-bottom: 12vh !important; /* En alttan olan mesafeyi ayarlar */
                 position: relative;
             }}
 
-            /* Form Kartının Arkasında Duracak Zula Logosu */
+            /* Arka Planda Duracak Zula Logosu */
             .main .block-container::before {{
                 content: "";
                 position: absolute;
-                top: 40%;
+                top: 30%; /* Logonun ekranın yukarısında kalması sağlandı */
                 left: 50%;
                 transform: translate(-50%, -50%);
-                width: 340px;
-                height: 170px;
+                width: 360px;
+                height: 180px;
                 background-image: url('{zula_logo_url}');
                 background-size: contain;
                 background-repeat: no-repeat;
@@ -83,17 +84,17 @@ def login_screen():
                 z-index: 0;
             }}
 
-            /* Glassmorphism Form Kartı - Logonun Üstünde Katmanlanır */
+            /* Glassmorphism Form Kartı - Bayağı Aşağıya Alındı */
             div[data-testid="stForm"] {{
                 position: relative;
                 z-index: 1;
-                background: rgba(18, 20, 26, 0.78) !important;
+                background: rgba(18, 20, 26, 0.82) !important;
                 border: 1px solid rgba(255, 255, 255, 0.12) !important;
                 border-radius: 20px !important;
                 padding: 2.2rem 2rem !important;
                 box-shadow: 0 25px 50px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
                 backdrop-filter: blur(12px);
-                margin-top: 6vh !important; /* Giriş kutusunu logonun biraz altına yerleştirir */
+                margin-top: 25vh !important; /* Giriş kutusunu belirgin şekilde aşağı iter */
             }}
 
             /* Input Alanları */
@@ -112,11 +113,11 @@ def login_screen():
                 transition: all 0.3s ease !important;
             }}
             div[data-baseweb="input"]:focus-within {{
-                border-color: #f59e0b !important; /* Zula Sarısı Odaklama */
+                border-color: #f59e0b !important;
                 box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.3) !important;
             }}
 
-            /* Buton Stili (Zula Temasına Uygun Sarı/Turuncu Tonlar) */
+            /* Buton Stili */
             div[data-testid="stFormSubmitButton"] > button {{
                 background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%) !important;
                 color: #ffffff !important;
@@ -143,7 +144,7 @@ def login_screen():
                 text-align: center;
                 font-size: 12px;
                 color: #94a3b8;
-                margin-top: 1.5rem;
+                margin-top: 1rem;
             }}
             .footer-text strong {{
                 color: #f1f5f9;
