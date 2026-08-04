@@ -24,23 +24,19 @@ def normalize_text(text):
     if not text:
         return ""
     text = str(text).strip().lower()
-    # Türkçe özel harf dönüşümleri
     replacements = {
-        'ı': 'i', 'İ': 'i', 'ğ': 'g', 'Ğ': 'g', 'ü': 'u', 'Ü': 'u',
-        'ş': 's', 'Ş': 's', 'ö': 'o', 'Ö': 'o', 'ç': 'c', 'Ç': 'c',
+        'ı': 'i', 'i̇': 'i', 'ğ': 'g', 'ü': 'u', 'ş': 's', 'ö': 'o', 'ç': 'c',
         'ñ': 'n', 'á': 'a', 'é': 'e', 'í': 'i', 'ó': 'o', 'ú': 'u'
     }
     for k, v in replacements.items():
         text = text.replace(k, v)
     text = unicodedata.normalize('NFKD', text).encode('ASCII', 'ignore').decode('utf-8')
-    # Sadece harf ve rakamları tut
     text = re.sub(r'[^a-z0-9\s]', '', text)
     return re.sub(r'\s+', ' ', text).strip()
 
 def are_names_matching(name1, name2):
     """
-    Tek isim / çift isim ve küçük-büyük harf uyumsuzluklarını akıllıca karşılaştırır.
-    Örn: "Ahmet Can" <-> "ahmet", "Mehmet Ali" <-> "mehmet ali"
+    Hatalı eşleşmeleri önlemek için daha güvenli isim karşılaştırması.
     """
     n1 = normalize_text(name1)
     n2 = normalize_text(name2)
@@ -52,20 +48,13 @@ def are_names_matching(name1, name2):
     if n1 == n2:
         return True
     
-    # Kelimelere ayır (Kelime bazlı kontrol)
     tokens1 = set(n1.split())
     tokens2 = set(n2.split())
     
-    # Kelime kümesi alt kümesi mi? (Örn: 'ahmet' kelimesi {'ahmet', 'can'} kümesinde var mı?)
+    # Kümelerden biri diğerinin tamamen içindeyse (Örn: 'ahmet' -> 'ahmet can')
     if tokens1.issubset(tokens2) or tokens2.issubset(tokens1):
         return True
         
-    # Herhangi bir ortak isim 3 harften uzunsa ve eşleşiyorsa
-    common_tokens = tokens1.intersection(tokens2)
-    for token in common_tokens:
-        if len(token) >= 3:
-            return True
-            
     return False
 
 def get_available_spreadsheets(creds_input):
@@ -120,33 +109,33 @@ class QAReportWorker:
                 continue
         return None
 
-    def get_target_worksheet(self, report_wb):
-        """Dile uygun hedef sekemeyi otomatik bulur."""
+    def get_target_worksheets(self, report_wb):
+        """
+        Eğer dil 'Tümü' / 'All' seçildiyse eşleşen tüm sekmeleri, 
+        spesifik dil seçildiyse tek sekmeyi döndürür.
+        """
         all_worksheets = report_wb.worksheets()
         target_lang = self.selected_lang.lower().strip()
-        target_month = self.selected_month_str.lower().strip()
-        target_year = str(self.selected_year).strip()
+        
+        if target_lang in ["tümü", "tumu", "all", ""]:
+            return all_worksheets
 
-        for ws in all_worksheets:
-            t_lower = ws.title.lower().strip()
-            if target_lang in t_lower and target_month in t_lower and target_year in t_lower:
-                return ws
-
-        for ws in all_worksheets:
-            t_lower = ws.title.lower().strip()
-            if target_lang in t_lower and target_month in t_lower:
-                return ws
-
+        matched_sheets = []
         for ws in all_worksheets:
             t_lower = ws.title.lower().strip()
             if target_lang in t_lower:
-                return ws
+                matched_sheets.append(ws)
 
-        return report_wb.sheet1
+        return matched_sheets if matched_sheets else [report_wb.sheet1]
 
     def count_user_reports_in_sheet(self, sheet):
         """Kullanıcı rapor sayılarını toplar."""
-        raw_rows = sheet.get_all_values()
+        try:
+            raw_rows = sheet.get_all_values()
+        except Exception as e:
+            self.log(f"⚠️ Sekme okunamadı [{sheet.title}]: {str(e)}")
+            return Counter()
+
         if not raw_rows or len(raw_rows) <= 1:
             return Counter()
 
@@ -188,16 +177,15 @@ class QAReportWorker:
         return counts if sum(counts.values()) > 0 else fallback_counts
 
     def process(self):
-        self.log(f"Google Sheets servisine bağlanılıyor... (Dil: {self.selected_lang})")
+        self.log(f"Google Sheets servisine bağlanılıyor... (Dil Filtresi: {self.selected_lang})")
         self.progress(10)
         client = self.connect()
 
         source_wb = client.open_by_key(self.source_id)
         report_wb = client.open_by_key(self.report_id)
         
-        target_sheet = self.get_target_worksheet(report_wb)
-        self.log(f"Kaynak Tablo: [{source_wb.title}] ➔ Hedef Sekme: [{target_sheet.title}]")
-        self.progress(25)
+        target_sheets = self.get_target_worksheets(report_wb)
+        self.progress(20)
 
         # 1. Kaynak Tablo Sekmelerini İşle
         source_worksheets = source_wb.worksheets()
@@ -207,12 +195,10 @@ class QAReportWorker:
             ws_title = ws.title.strip()
             title_lower = ws_title.lower()
 
-            # 0 Kullanıcı Testi Tamamen Atlanır
             if any(term in title_lower for term in ["0 kullanıcı", "0 kul", "new user test", "prueba de usuario nuevo"]):
-                self.log(f"🚫 Pas geçildi: [{ws_title}] (0 Kullanıcı Testi işlenmeyecek)")
+                self.log(f"🚫 Pas geçildi: [{ws_title}] (0 Kullanıcı Testi)")
                 continue
 
-            # Hedef Sütun Eşleştirmesi
             target_col_name = ""
             if any(term in title_lower for term in ["tarjeta de misión", "mission card", "pass", "g.görev"]):
                 target_col_name = "Zula Pass"
@@ -227,62 +213,55 @@ class QAReportWorker:
 
         self.progress(60)
 
-        # 2. Ana Tablo Yapısını Oku
-        target_rows = target_sheet.get_all_values()
-        if not target_rows:
-            self.log("⚠️ Hedef sekmede veri/başlık yapısı bulunamadı!")
-            self.progress(100)
-            return
+        # 2. Seçilen / Eşleşen Hedef Sekmeleri Güncelle
+        for target_sheet in target_sheets:
+            self.log(f"📝 İşleniyor: Hedef Sekme [{target_sheet.title}]")
+            target_rows = target_sheet.get_all_values()
+            if not target_rows:
+                continue
 
-        target_headers = [str(h).strip() for h in target_rows[0]]
-        
-        user_col_in_target = 0
-        for idx, h in enumerate(target_headers):
-            if any(k in h.lower() for k in ["kullanıcı", "user", "name", "qa", "ad", "nombre"]):
-                user_col_in_target = idx
-                break
-
-        col_index_map = {}
-        for cat_name in category_counts.keys():
+            target_headers = [str(h).strip() for h in target_rows[0]]
+            
+            user_col_in_target = 0
             for idx, h in enumerate(target_headers):
-                if cat_name.lower() in h.lower():
-                    col_index_map[cat_name] = idx
+                if any(k in h.lower() for k in ["kullanıcı", "user", "name", "qa", "ad", "nombre"]):
+                    user_col_in_target = idx
                     break
 
-        cell_updates = []
-        
-        # 3. Satır Bazlı İsim Eşleştirme ve Puan Yazma
-        for row_idx, row in enumerate(target_rows[1:], start=2):
-            if not row or user_col_in_target >= len(row):
-                continue
+            col_index_map = {}
+            for cat_name in category_counts.keys():
+                for idx, h in enumerate(target_headers):
+                    if cat_name.lower() in h.lower():
+                        col_index_map[cat_name] = idx
+                        break
+
+            cell_updates = []
             
-            target_user_name = str(row[user_col_in_target]).strip()
-            if not target_user_name:
-                continue
+            for row_idx, row in enumerate(target_rows[1:], start=2):
+                if not row or user_col_in_target >= len(row):
+                    continue
+                
+                target_user_name = str(row[user_col_in_target]).strip()
+                if not target_user_name:
+                    continue
 
-            for cat_name, u_counts in category_counts.items():
-                if cat_name in col_index_map:
-                    target_c_idx = col_index_map[cat_name]
-                    
-                    matched_count = 0
-                    # Esnek İsim Karşılaştırması Yapılır
-                    for src_user_name, count in u_counts.items():
-                        if are_names_matching(target_user_name, src_user_name):
-                            matched_count += count  # Çift kayıt varsa puanları toplar
-                    
-                    cell_updates.append({
-                        'range': gspread.utils.rowcol_to_a1(row_idx, target_c_idx + 1),
-                        'values': [[matched_count if matched_count > 0 else ""]]
-                    })
+                for cat_name, u_counts in category_counts.items():
+                    if cat_name in col_index_map:
+                        target_c_idx = col_index_map[cat_name]
+                        
+                        matched_count = 0
+                        for src_user_name, count in u_counts.items():
+                            if are_names_matching(target_user_name, src_user_name):
+                                matched_count += count
+                        
+                        cell_updates.append({
+                            'range': gspread.utils.rowcol_to_a1(row_idx, target_c_idx + 1),
+                            'values': [[matched_count if matched_count > 0 else ""]]
+                        })
 
-        self.progress(85)
+            if cell_updates:
+                target_sheet.batch_update(cell_updates)
+                self.log(f"✅ [{target_sheet.title}] sekmesine puanlar aktarıldı.")
 
-        # 4. Güncellemeleri Biçimlendirmeleri KORUYARAK Yaz
-        if cell_updates:
-            self.log(f"İsimler eşleştirildi. Puanlar [{target_sheet.title}] sekmesine yazılıyor...")
-            target_sheet.batch_update(cell_updates)
-            self.progress(100)
-            self.log(f"✅ İŞLEM BAŞARILI! Tek/çift isimli ve küçük harfle yazılan kullanıcı puanları doğru şekilde aktarıldı.")
-        else:
-            self.progress(100)
-            self.log(f"⚠️ [{target_sheet.title}] sekmesinde eşleşen veri bulunamadı.")
+        self.progress(100)
+        self.log(f"🚀 TÜM İŞLEMLER BAŞARIYLA TAMAMLANDI!")
