@@ -52,7 +52,7 @@ class QAReportWorker:
         return gspread.authorize(creds)
 
     def parse_date(self, date_val):
-        """Genişletilmiş tarih ayrıştırma desteği."""
+        """Çeşitli tarih biçimlerini ayrıştırır."""
         if not date_val:
             return None
         date_str = str(date_val).strip()
@@ -67,6 +67,42 @@ class QAReportWorker:
         """Satır imzası oluşturan fonksiyon."""
         return "||".join([str(val).strip().lower() for val in row_values if str(val).strip()])
 
+    def get_target_worksheet(self, report_wb):
+        """
+        Görseldeki sekme formatına (örn: 'ENG Temmuz 2026') göre en uygun sekkeyi bulur.
+        """
+        all_worksheets = report_wb.worksheets()
+        
+        target_lang = self.selected_lang.lower().strip()
+        target_month = self.selected_month_str.lower().strip()
+        target_year = str(self.selected_year).strip()
+
+        # 1. Öncelik: Sekme adında Dil + Ay + Yıl'ın hepsi geçiyor mu? (Örn: "ENG Temmuz 2026")
+        for ws in all_worksheets:
+            title_lower = ws.title.lower().strip()
+            if target_lang in title_lower and target_month in title_lower and target_year in title_lower:
+                return ws
+
+        # 2. Öncelik: Sekme adında Dil + Ay geçiyor mu? (Örn: "ENG Temmuz")
+        for ws in all_worksheets:
+            title_lower = ws.title.lower().strip()
+            if target_lang in title_lower and target_month in title_lower:
+                return ws
+
+        # 3. Öncelik: Sadece Dil adı geçiyor mu? (Örn: "ENG")
+        for ws in all_worksheets:
+            title_lower = ws.title.lower().strip()
+            if target_lang in title_lower:
+                return ws
+
+        # 4. Öncelik: Form Yanıtları dışındaki ilk sekme
+        for ws in all_worksheets:
+            if not any(form_kw in ws.title.lower() for form_kw in ["form yanıtları", "form responses"]):
+                return ws
+
+        # Son çare
+        return report_wb.sheet1
+
     def process(self):
         self.log("Google Sheets servisine bağlanılıyor...")
         self.progress(10)
@@ -79,17 +115,9 @@ class QAReportWorker:
         source_sheet = source_wb.sheet1
 
         report_wb = client.open_by_key(self.report_id)
-        
-        # Sekme kontrolü
-        try:
-            if self.selected_lang != "Tümü" and self.selected_lang in [s.title for s in report_wb.worksheets()]:
-                report_sheet = report_wb.worksheet(self.selected_lang)
-            else:
-                report_sheet = report_wb.sheet1
-        except Exception:
-            report_sheet = report_wb.sheet1
+        report_sheet = self.get_target_worksheet(report_wb)
 
-        self.log(f"Kaynak: [{source_wb.title}] ➔ Hedef: [{report_wb.title} / Sekme: {report_sheet.title}]")
+        self.log(f"Kaynak: [{source_wb.title}] ➔ Hedef Sekme: [{report_sheet.title}]")
         self.progress(35)
         
         raw_source_rows = source_sheet.get_all_values()
@@ -103,27 +131,24 @@ class QAReportWorker:
         headers = [str(h).strip().lower() for h in raw_source_rows[0]]
         data_rows = raw_source_rows[1:]
 
-        # Tarih sütunu tespiti
+        # Tarih sütununu bul
         date_col_idx = -1
         for idx, h in enumerate(headers):
-            if any(t in h for t in ["tarih", "date", "fecha", "data", "day", "gün"]):
+            if any(t in h for t in ["tarih", "date", "fecha", "data", "day", "gün", "timestamp", "zaman damgası"]):
                 date_col_idx = idx
                 break
 
-        if date_col_idx == -1:
-            self.log("ℹ️ UYARI: Tarih sütunu adı tespit edilemedi. Tüm satırlar tarih filtresi uygulanmadan değerlendirilecek.")
-
-        # Hedef tablodaki mevcut verilerin imzalarını alma
+        # Hedef sekmekdeki mevcut verileri oku (Mükerrer eklemeyi engellemek için)
         existing_signatures = set()
         for row in existing_report_rows:
             sig = self.make_signature(row)
             if sig:
                 existing_signatures.add(sig)
 
-        self.log(f"Hedef Tabloda {len(existing_signatures)} mevcut kayıt tarandı.")
+        self.log(f"Hedef Sekmede [{report_sheet.title}] {len(existing_signatures)} mevcut kayıt tarandı.")
         self.progress(50)
 
-        self.log(f"Veriler işleniyor... (Filtre: Yıl={self.selected_year}, Ay={self.selected_month_str})")
+        self.log(f"Veriler filtreleniyor... (Filtre: Yıl={self.selected_year}, Ay={self.selected_month_str})")
         
         rows_to_insert = []
         duplicate_count = 0
@@ -142,7 +167,7 @@ class QAReportWorker:
                         filtered_out_date_count += 1
                         continue
 
-            # Mükerrer Kontrolü
+            # Mükerrer Kayıt Kontrolü
             row_sig = self.make_signature(row_vals)
             if row_sig in existing_signatures:
                 duplicate_count += 1
@@ -152,17 +177,17 @@ class QAReportWorker:
             existing_signatures.add(row_sig)
 
         self.progress(75)
-        self.log(f"İşlem Sonucu: {len(rows_to_insert)} yeni satır eklenecek. ({duplicate_count} kopya satır atlandı, {filtered_out_date_count} satır tarih filtresine takıldı).")
+        self.log(f"Sonuç: {len(rows_to_insert)} yeni satır hazır ({duplicate_count} mükerrer atlandı, {filtered_out_date_count} satır tarih filtresine takıldı).")
 
-        # Hedefe Eklesin
+        # Hedef Sekmeye Aktarım
         if rows_to_insert:
-            self.log("Veriler hedef tabloya aktarılıyor...")
+            self.log(f"Veriler [{report_sheet.title}] sekmesine yazılıyor...")
             report_sheet.append_rows(rows_to_insert)
             self.progress(100)
-            self.log(f"✅ İŞLEM BAŞARILI! {len(rows_to_insert)} adet yeni kayıt hedef tabloya aktarıldı.")
+            self.log(f"✅ İŞLEM BAŞARILI! Veriler doğrudan [{report_sheet.title}] sekmesine eklendi.")
         else:
             self.progress(100)
             if duplicate_count > 0:
-                self.log("⚠️ Veriler zaten hedef tabloda mevcut olduğu için tekrar kopyalanmadı.")
+                self.log(f"⚠️ Veriler zaten [{report_sheet.title}] sekmesinde mevcut.")
             else:
-                self.log("⚠️ Seçilen filtrelere (Ay/Yıl) uyan veri bulunamadı. Lütfen filtre parametrelerinizi veya kaynak tablodaki tarihleri kontrol edin.")
+                self.log("⚠️ Seçilen filtrelere uyan yeni veri bulunamadı.")
