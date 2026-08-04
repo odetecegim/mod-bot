@@ -17,26 +17,45 @@ st.caption("Google Sheets verilerini seçilen Ay ve Yıl'a göre otomatik eşle�
 # --- GOOGLE CREDENTIALS YÖNETİMİ ---
 @st.cache_resource
 def get_credentials():
-    # 1. Base64 veya String JSON secrets kontrolü
+    # 1. GCP_SERVICE_ACCOUNT Secrets Kontrolü (TOML Objesi, Base64 veya String)
     if "GCP_SERVICE_ACCOUNT" in st.secrets:
         try:
-            raw_cred = st.secrets["GCP_SERVICE_ACCOUNT"]
-            try:
-                decoded = base64.b64decode(raw_cred).decode('utf-8')
-                creds = json.loads(decoded)
-            except Exception:
-                creds = json.loads(raw_cred)
+            sec = st.secrets["GCP_SERVICE_ACCOUNT"]
+            
+            # Streamlit secrets objesi (AttrDict/dict) ise:
+            if isinstance(sec, (dict, st.runtime.secrets.AttrDict)):
+                creds = dict(sec)
+            # Düz string veya Base64 metin ise:
+            elif isinstance(sec, str):
+                try:
+                    decoded = base64.b64decode(sec).decode('utf-8')
+                    creds = json.loads(decoded)
+                except Exception:
+                    creds = json.loads(sec)
+            else:
+                creds = dict(sec)
+
+            # Private Key format düzeltmesi (PEM Hatasını engeller)
+            if "private_key" in creds:
+                pk = str(creds["private_key"])
+                pk = pk.replace("\\n", "\n").strip()
+                if pk.startswith('"') and pk.endswith('"'):
+                    pk = pk[1:-1]
+                creds["private_key"] = pk
+                
             return creds
         except Exception as e:
             st.error(f"Secrets okuma hatası: {e}")
             return None
-    # 2. TOML objesi kontrolü (Alternatif format)
+
+    # 2. GOOGLE_CREDENTIALS Secrets Kontrolü (Alternatif)
     elif "GOOGLE_CREDENTIALS" in st.secrets:
         creds = dict(st.secrets["GOOGLE_CREDENTIALS"])
         if "private_key" in creds:
-            creds["private_key"] = creds["private_key"].replace("\\n", "\n")
+            creds["private_key"] = str(creds["private_key"]).replace("\\n", "\n")
         return creds
-    # 3. Yerel dosya kontrolü
+
+    # 3. Yerel Dosya Kontrolü
     elif os.path.exists("credentials.json"):
         return "credentials.json"
     else:
@@ -70,7 +89,7 @@ with st.form("qa_form"):
     with col3:
         selected_lang = st.selectbox("Dil", ["Tümü", "ENG", "ESP", "POR", "TR"])
     with col4:
-        months = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
+        months = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylul", "Ekim", "Kasım", "Aralık"]
         selected_month = st.selectbox("Ay", months, index=6)
     with col5:
         selected_year = st.selectbox("Yıl", ["2025", "2026", "2027"], index=1)
