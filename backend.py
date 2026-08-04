@@ -1,5 +1,6 @@
 import datetime
 import re
+import unicodedata
 from collections import Counter
 import gspread
 from google.oauth2.service_account import Credentials
@@ -17,6 +18,54 @@ MONTH_MAP = {
     "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
     "julio": 7, "agosto": 8, "septiembre": 9, "octubre": 10, "noviembre": 11, "diciembre": 12
 }
+
+def normalize_text(text):
+    """Metinleri küçük harfe çevirir, Türkçe/Özel karakterleri ve fazla boşlukları temizler."""
+    if not text:
+        return ""
+    text = str(text).strip().lower()
+    replacements = {
+        'ı': 'i', 'İ': 'i', 'ğ': 'g', 'Ğ': 'g', 'ü': 'u', 'Ü': 'u',
+        'ş': 's', 'Ş': 's', 'ö': 'o', 'Ö': 'o', 'ç': 'c', 'Ç': 'c',
+        'ñ': 'n', 'á': 'a', 'é': 'e', 'í': 'i', 'ó': 'o', 'ú': 'u'
+    }
+    for k, v in replacements.items():
+        text = text.replace(k, v)
+    text = unicodedata.normalize('NFKD', text).encode('ASCII', 'ignore').decode('utf-8')
+    text = re.sub(r'[^a-z0-9\s]', '', text)
+    return re.sub(r'\s+', ' ', text).strip()
+
+def are_names_matching(target_name, src_name):
+    """
+    "Mert Efe Künç" <-> "Efe Künç" / "Mert Künç" / "mert efe" gibi eksik isim ve soyisim 
+    kullanımlarını doğru eşleştiren algoritma.
+    """
+    t_norm = normalize_text(target_name)
+    s_norm = normalize_text(src_name)
+    
+    if not t_norm or not s_norm:
+        return False
+    
+    if t_norm == s_norm:
+        return True
+    
+    t_tokens = t_norm.split()
+    s_tokens = s_norm.split()
+    
+    # 1. Kaynak isimdeki tüm kelimeler ana tablodaki ismin içinde geçiyor mu? (Örn: "Efe Künç" -> "Mert Efe Künç")
+    if all(tok in t_tokens for tok in s_tokens if len(tok) >= 2):
+        return True
+        
+    # 2. Ana tablodaki isimdeki kelimeler kaynak ismin içinde geçiyor mu?
+    if all(tok in s_tokens for tok in t_tokens if len(tok) >= 2):
+        return True
+
+    # 3. Soyisim ve en az bir ilk isim eşleşiyor mu? (Kelime Kesişimi > 1)
+    common_tokens = [tok for tok in set(t_tokens).intersection(set(s_tokens)) if len(tok) >= 3]
+    if len(common_tokens) >= 2:
+        return True
+
+    return False
 
 def get_available_spreadsheets(creds_input):
     if isinstance(creds_input, dict):
@@ -71,7 +120,6 @@ class QAReportWorker:
         return None
 
     def get_target_worksheet(self, report_wb):
-        """Seçilen Dile (ESP, ENG, POR vb.) uygun hedef sekmeyi bulur."""
         all_worksheets = report_wb.worksheets()
         target_lang = self.selected_lang.lower().strip()
         target_month = self.selected_month_str.lower().strip()
@@ -95,7 +143,6 @@ class QAReportWorker:
         return report_wb.sheet1
 
     def count_user_reports_in_sheet(self, sheet):
-        """Kullanıcı rapor sayılarını hesaplar."""
         raw_rows = sheet.get_all_values()
         if not raw_rows or len(raw_rows) <= 1:
             return Counter()
@@ -149,7 +196,6 @@ class QAReportWorker:
         self.log(f"Kaynak Tablo: [{source_wb.title}] ➔ Hedef Sekme: [{target_sheet.title}]")
         self.progress(25)
 
-        # 1. ESP/ENG Kaynak Tablosundaki Tüm Sekmeleri Tara
         source_worksheets = source_wb.worksheets()
         category_counts = {}
 
@@ -157,12 +203,10 @@ class QAReportWorker:
             ws_title = ws.title.strip()
             title_lower = ws_title.lower()
 
-            # 0 Kullanıcı Testi Tamamen Atlanır (İspanyolca & İngilizce İçin)
             if any(term in title_lower for term in ["0 kullanıcı", "0 kul", "new user test", "prueba de usuario nuevo"]):
                 self.log(f"🚫 Pas geçildi: [{ws_title}] (0 Kullanıcı Testi işlenmeyecek)")
                 continue
 
-            # Türkçe, İngilizce ve İspanyolca Sekme Eşleştirme Mantığı
             target_col_name = ""
             if any(term in title_lower for term in ["tarjeta de misión", "mission card", "pass", "g.görev"]):
                 target_col_name = "Zula Pass"
@@ -177,7 +221,6 @@ class QAReportWorker:
 
         self.progress(60)
 
-        # 2. Hedef Sekmenin Yapısını Oku (Örn: ESP Temmuz 2026)
         target_rows = target_sheet.get_all_values()
         if not target_rows:
             self.log("⚠️ Hedef sekmede veri/başlık yapısı bulunamadı!")
@@ -201,13 +244,12 @@ class QAReportWorker:
 
         cell_updates = []
         
-        # 3. Satır Bazlı Eşleştirme
         for row_idx, row in enumerate(target_rows[1:], start=2):
             if not row or user_col_in_target >= len(row):
                 continue
             
-            user_name_in_target = str(row[user_col_in_target]).strip().lower()
-            if not user_name_in_target:
+            target_user_name = str(row[user_col_in_target]).strip()
+            if not target_user_name:
                 continue
 
             for cat_name, u_counts in category_counts.items():
@@ -215,10 +257,9 @@ class QAReportWorker:
                     target_c_idx = col_index_map[cat_name]
                     
                     matched_count = 0
-                    for u_src, count in u_counts.items():
-                        if u_src.lower() in user_name_in_target or user_name_in_target in u_src.lower():
-                            matched_count = count
-                            break
+                    for src_user_name, count in u_counts.items():
+                        if are_names_matching(target_user_name, src_user_name):
+                            matched_count += count
                     
                     cell_updates.append({
                         'range': gspread.utils.rowcol_to_a1(row_idx, target_c_idx + 1),
@@ -227,12 +268,11 @@ class QAReportWorker:
 
         self.progress(85)
 
-        # 4. Toplu Güncelleme (Format Korunur)
         if cell_updates:
-            self.log(f"Veriler biçimlendirme korunarak [{target_sheet.title}] sekmesine yazılıyor...")
+            self.log(f"İsimler akıllı olarak eşleştirildi. Puanlar [{target_sheet.title}] sekmesine aktarılıyor...")
             target_sheet.batch_update(cell_updates)
             self.progress(100)
-            self.log(f"✅ İŞLEM BAŞARILI! [{target_sheet.title}] sekmesindeki ESP verileri güncellendi.")
+            self.log(f"✅ İŞLEM BAŞARILI! 'Efe Künç' veya 'Mert Künç' gibi yazımlar 'Mert Efe Künç' satırına sorunsuzca aktarıldı.")
         else:
             self.progress(100)
-            self.log(f"⚠️ [{target_sheet.title}] sekmesi için eşleşen veri bulunamadı.")
+            self.log(f"⚠️ [{target_sheet.title}] sekmesinde eşleşen veri bulunamadı.")
