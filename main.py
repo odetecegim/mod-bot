@@ -34,25 +34,40 @@ def check_session_timeout():
 
 check_session_timeout()
 
-# --- YENİ MODERN GİRİŞ ARAYÜZÜ ---
+# --- YENİ MODERN GİRİŞ ARAYÜZÜ (TAM BOYUT GÖRSEL VE ORTALAMA) ---
 def login_screen():
-    st.markdown("""
+    bg_image_url = "https://i.ibb.co/6crb7b2Z/image.jpg"
+
+    st.markdown(f"""
         <style>
-            /* Arka Plan Gradient & Efekt */
-            .stApp {
-                background: radial-gradient(circle at 50% 30%, #1e1e2d 0%, #0d0d15 100%) !important;
-            }
+            /* Arka Plan Görselini Tam Ekran Sığdır / Kapla */
+            .stApp {{
+                background: linear-gradient(rgba(10, 10, 15, 0.70), rgba(10, 10, 15, 0.80)),
+                            url('{bg_image_url}') no-repeat center center fixed !important;
+                background-size: 100% 100% !important; /* Görseli ekranın tam boyutuna oturtur */
+            }}
 
-            .block-container {
-                padding-top: 4rem !important;
-                padding-bottom: 2rem !important;
+            /* Sayfa Alanını ve Ekran Yüksekliğini Dikey Ortala */
+            html, body, [data-testid="stAppViewContainer"] {{
+                height: 100vh;
+                margin: 0;
+                padding: 0;
+            }}
+
+            .main .block-container {{
+                padding-top: 0rem !important;
+                padding-bottom: 0rem !important;
                 max-width: 440px !important;
-            }
+                height: 100vh;
+                display: flex;
+                flex-direction: column;
+                justify-content: center; /* Tam Dikey Ortalama */
+            }}
 
-            /* Logo & Rozet Alanı */
-            .badge-box {
-                background: rgba(239, 68, 68, 0.1);
-                border: 1px solid rgba(239, 68, 68, 0.3);
+            /* Rozet Alanı */
+            .badge-box {{
+                background: rgba(239, 68, 68, 0.15);
+                border: 1px solid rgba(239, 68, 68, 0.4);
                 border-radius: 50px;
                 padding: 6px 16px;
                 width: fit-content;
@@ -60,24 +75,25 @@ def login_screen():
                 display: flex;
                 align-items: center;
                 gap: 8px;
-            }
-            .badge-dot {
+                backdrop-filter: blur(8px);
+            }}
+            .badge-dot {{
                 width: 8px;
                 height: 8px;
                 background-color: #ef4444;
                 border-radius: 50%;
                 box-shadow: 0 0 10px #ef4444;
-            }
-            .badge-text {
+            }}
+            .badge-text {{
                 color: #f87171;
                 font-size: 11px;
                 font-weight: 700;
                 letter-spacing: 1.5px;
                 text-transform: uppercase;
-            }
+            }}
 
             /* Başlık Stilleri */
-            .title-text {
+            .title-text {{
                 text-align: center;
                 font-size: 26px;
                 font-weight: 800;
@@ -85,46 +101,48 @@ def login_screen():
                 letter-spacing: -0.5px;
                 margin-bottom: 6px;
                 font-family: 'Inter', system-ui, -apple-system, sans-serif;
-            }
-            .subtitle-text {
+                text-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            }}
+            .subtitle-text {{
                 text-align: center;
                 font-size: 13px;
-                color: #94a3b8;
-                margin-bottom: 2rem;
-            }
+                color: #cbd5e1;
+                margin-bottom: 1.8rem;
+                text-shadow: 0 1px 5px rgba(0,0,0,0.5);
+            }}
 
             /* Glassmorphism Form Kartı */
-            div[data-testid="stForm"] {
-                background: rgba(22, 22, 34, 0.75) !important;
-                border: 1px solid rgba(255, 255, 255, 0.08) !important;
+            div[data-testid="stForm"] {{
+                background: rgba(18, 18, 28, 0.78) !important;
+                border: 1px solid rgba(255, 255, 255, 0.15) !important;
                 border-radius: 20px !important;
                 padding: 2.2rem 2rem !important;
-                box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
+                box-shadow: 0 25px 50px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.15) !important;
                 backdrop-filter: blur(16px);
-            }
+            }}
 
             /* Input Alanları */
-            label {
-                color: #cbd5e1 !important;
+            label {{
+                color: #f1f5f9 !important;
                 font-size: 12px !important;
                 font-weight: 600 !important;
                 letter-spacing: 0.5px !important;
                 margin-bottom: 6px !important;
-            }
-            div[data-baseweb="input"] {
-                background-color: rgba(13, 13, 21, 0.8) !important;
-                border: 1px solid rgba(255, 255, 255, 0.1) !important;
+            }}
+            div[data-baseweb="input"] {{
+                background-color: rgba(10, 10, 18, 0.8) !important;
+                border: 1px solid rgba(255, 255, 255, 0.15) !important;
                 border-radius: 12px !important;
                 color: #ffffff !important;
                 transition: all 0.3s ease !important;
-            }
-            div[data-baseweb="input"]:focus-within {
+            }}
+            div[data-baseweb="input"]:focus-within {{
                 border-color: #ef4444 !important;
-                box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.25) !important;
-            }
+                box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.3) !important;
+            }}
 
             /* Buton Stili */
-            div[data-testid="stFormSubmitButton"] > button {
+            div[data-testid="stFormSubmitButton"] > button {{
                 background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%) !important;
                 color: #ffffff !important;
                 border: none !important;
@@ -133,26 +151,26 @@ def login_screen():
                 font-weight: 700 !important;
                 font-size: 15px !important;
                 letter-spacing: 0.5px !important;
-                box-shadow: 0 8px 20px rgba(239, 68, 68, 0.35) !important;
+                box-shadow: 0 8px 20px rgba(239, 68, 68, 0.4) !important;
                 transition: all 0.2s ease-in-out !important;
                 margin-top: 10px !important;
-            }
-            div[data-testid="stFormSubmitButton"] > button:hover {
+            }}
+            div[data-testid="stFormSubmitButton"] > button:hover {{
                 transform: translateY(-2px);
-                box-shadow: 0 12px 25px rgba(239, 68, 68, 0.5) !important;
+                box-shadow: 0 12px 25px rgba(239, 68, 68, 0.6) !important;
                 background: linear-gradient(135deg, #f87171 0%, #ef4444 100%) !important;
-            }
+            }}
 
             /* Alt Bilgi */
-            .footer-text {
+            .footer-text {{
                 text-align: center;
                 font-size: 12px;
-                color: #64748b;
-                margin-top: 1.8rem;
-            }
-            .footer-text strong {
                 color: #94a3b8;
-            }
+                margin-top: 1.5rem;
+            }}
+            .footer-text strong {{
+                color: #f1f5f9;
+            }}
         </style>
     """, unsafe_allow_html=True)
 
