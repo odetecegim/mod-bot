@@ -17,7 +17,7 @@ MONTH_MAP = {
     "temmuz": 7, "agustos": 8, "eylul": 9, "ekim": 10, "kasim": 11, "aralik": 12
 }
 
-# 🎯 DİLLERE GÖRE KATI SEKME -> SÜTUN HARİTASI
+# DİL BAZLI SABİT SEKME VE SÜTUN MAPPING
 EXACT_COLUMN_MAP = {
     "POR": {
         "cartao de missao": "G. Kartı (Günlük)",
@@ -133,7 +133,7 @@ class QAReportWorker:
         source_wb = client.open_by_key(self.source_id)
         report_wb = client.open_by_key(self.report_id)
         
-        # 🎯 1. KESİN HEDEF SEKME ARAMA ("POR TEMMUZ 2026")
+        # 1. KESİN HEDEF SEKME MATCH ("POR TEMMUZ 2026")
         target_sheet = None
         target_lang = normalize_text(self.selected_lang)
         target_month = normalize_text(self.selected_month_str)
@@ -150,12 +150,12 @@ class QAReportWorker:
             self.progress(100)
             return
 
-        self.log(f"🎯 Hedef Sekme Doğrulandı: [{target_sheet.title}]")
+        self.log(f"🎯 Hedef Sekme Bulundu: [{target_sheet.title}]")
         self.progress(20)
 
         target_rows = target_sheet.get_all_values()
         if not target_rows:
-            self.log("⚠️ Ana tabloda veri bulunamadı!")
+            self.log("⚠️ Hedef tabloda veri bulunamadı!")
             self.progress(100)
             return
 
@@ -169,12 +169,10 @@ class QAReportWorker:
             ws_title = ws.title.strip()
             ws_title_norm = normalize_text(ws_title)
 
-            # Test/Kopya Sekmeleri Filtrele
             if any(k in ws_title_norm for k in ["0 kul", "old", "kopyasi", "copy"]):
-                self.log(f"🚫 Es geçildi (Test/Kopya Sekme): [{ws_title}]")
+                self.log(f"🚫 Es geçildi (Test Sekme): [{ws_title}]")
                 continue
 
-            # Katı Kural Eşleme
             mapped_header = None
             for rule_key, col_header in lang_rules.items():
                 if rule_key in ws_title_norm:
@@ -182,10 +180,10 @@ class QAReportWorker:
                     break
 
             if not mapped_header:
-                self.log(f"🚫 Es geçildi (Eşleşmeyen Sekme): [{ws_title}]")
+                self.log(f"🚫 Es geçildi (Tanımsız Sekme): [{ws_title}]")
                 continue
 
-            self.log(f"📊 Sekme Okunuyor: [{ws_title}] ➔ Hedef Sütun: '{mapped_header}'")
+            self.log(f"📊 Sekme Okunuyor: [{ws_title}] ➔ Sütun: '{mapped_header}'")
             raw_rows = ws.get_all_values()
             if len(raw_rows) <= 1:
                 continue
@@ -197,7 +195,7 @@ class QAReportWorker:
                 if not row:
                     continue
 
-                # 🗓️ TARİH DOĞRULAMA (Sadece Seçilen Ay ve Yıl)
+                # Tarih Filtresi
                 row_date_str = str(row[0]).strip() if len(row) > 0 else ""
                 row_month, row_year = parse_row_date(row_date_str)
 
@@ -215,7 +213,7 @@ class QAReportWorker:
                     if name_b and name_b != user_key:
                         counts[name_b] += 1
 
-            self.log(f"   └─ 📅 {self.selected_month_str} {self.selected_year} dönemine ait {filtered_count} satır aktarıma alındı.")
+            self.log(f"   └─ 📅 {self.selected_month_str} {self.selected_year} dönemine ait {filtered_count} satır alındı.")
 
             if mapped_header not in category_counts:
                 category_counts[mapped_header] = Counter()
@@ -223,7 +221,7 @@ class QAReportWorker:
 
         self.progress(70)
 
-        # HEDEF KULLANICI LİSTESİ ÇIKAR
+        # Kullanıcı Satırlarını Eşleştir ve Yaz
         target_users = []
         for row_idx, row in enumerate(target_rows[1:], start=2):
             if not row:
@@ -264,10 +262,10 @@ class QAReportWorker:
         self.progress(90)
 
         if cell_updates:
-            self.log(f"✍️ Google Sheets [{target_sheet.title}] sekmesine {len(cell_updates)} hücre yazılıyor...")
+            self.log(f"✍️ [{target_sheet.title}] sekmesine {len(cell_updates)} veri aktarılıyor...")
             safe_batch_update(target_sheet, cell_updates, self.log)
             self.progress(100)
-            self.log("✅ İŞLEM BAŞARILI! Veriler eksiksiz güncellendi.")
+            self.log("✅ İŞLEM BAŞARILI! Yalnızca seçilen ay ve dil verileri aktarıldı.")
         else:
             self.progress(100)
-            self.log("⚠️ Seçilen kritere uygun aktarılacak veri bulunamadı.")
+            self.log("⚠️ Döneme veya Kullanıcılara uygun veri bulunamadı.")
