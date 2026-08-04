@@ -35,22 +35,24 @@ def login_screen():
                 max-width: 480px !important;
             }
 
-            /* İKON KUTUSU (KIRMIZI ZULA IŞILTISI) */
+            /* İKON KUTUSU (KIRMIZI IŞILTILI TEŞKİLAT LOGOSU) */
             .icon-box {
-                background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%);
-                width: 80px;
-                height: 80px;
-                border-radius: 20px;
+                background: linear-gradient(135deg, #dc2626 0%, #7f1d1d 100%);
+                width: 90px;
+                height: 90px;
+                border-radius: 22px;
                 display: flex;
                 align-items: center;
                 justify-content: center;
                 margin: 0 auto 1.2rem auto;
                 box-shadow: 0 0 35px rgba(220, 38, 38, 0.6);
                 border: 2px solid #ef4444;
+                overflow: hidden;
+                padding: 10px;
             }
             .icon-box img {
-                width: 50px;
-                height: 50px;
+                width: 100%;
+                height: 100%;
                 object-fit: contain;
             }
 
@@ -135,18 +137,16 @@ def login_screen():
             }
         </style>
 
-        <!-- MOUSE TAKİP EDEN KIRMIZI YILDIZ / KIVILCIM EFEKTİ (JAVASCRIPT) -->
+        <!-- MOUSE TAKİP EDEN KIRMIZI YILDIZ EFEKTİ (JAVASCRIPT) -->
         <script>
             document.addEventListener('mousemove', function(e) {
                 let star = document.createElement('div');
                 star.className = 'star-particle';
-                star.innerHTML = '★'; // Kırmızı Yıldız efekti
+                star.innerHTML = '★';
                 
-                // Fare koordinatları
                 star.style.left = e.clientX + 'px';
                 star.style.top = e.clientY + 'px';
                 
-                // Rastgele boyut ve dönüş
                 let size = Math.random() * 12 + 10;
                 star.style.fontSize = size + 'px';
                 star.style.position = 'fixed';
@@ -174,7 +174,7 @@ def login_screen():
     """, unsafe_allow_html=True)
 
     # Teşkilat Logosu ve Başlıklar
-    st.markdown('<div class="icon-box"><img src="https://zulaoyun.com/assets/images/logo.png" alt="Zula Logo"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="icon-box"><img src="https://i.ibb.co/JRkyN71r/logo.png" alt="Teşkilat Logo"></div>', unsafe_allow_html=True)
     st.markdown('<div class="title-text">TEŞKİLAT CONTROL CENTER</div>', unsafe_allow_html=True)
     st.markdown('<div class="subtitle-text">Yetkili Yönetici Girişi</div>', unsafe_allow_html=True)
 
@@ -184,7 +184,8 @@ def login_screen():
         submit = st.form_submit_button("🎯 ONAYLA VE GİRİŞ YAP", use_container_width=True)
 
         if submit:
-            admin_pass = st.secrets.get("ADMIN_PASSWORD", "123456")
+            # Şifre kontrolü: Varsayılan "akademi2026", yoksa Secrets alanındaki ADMIN_PASSWORD
+            admin_pass = st.secrets.get("ADMIN_PASSWORD", "akademi2026")
             if password_input == admin_pass:
                 st.session_state["authenticated"] = True
                 st.rerun()
