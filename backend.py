@@ -1,3 +1,4 @@
+import os
 import datetime
 import re
 import time
@@ -14,11 +15,8 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive"
 ]
 
-# API Key'ini buraya koyabilir veya arayüzden aktarabilirsin
-OPENAI_API_KEY = "YOUR_OPENAI_API_KEY"
-
 # ==========================================
-# 🧹 METİN NORMALLERİ VE TARİH
+# 🧹 YARDIMCI METİN İŞLEMLERİ
 # ==========================================
 
 def normalize_text(text):
@@ -36,7 +34,7 @@ def normalize_text(text):
     text = re.sub(r'[^a-z0-9\s]', ' ', text)
     return " ".join(text.split())
 
-def safe_batch_update(sheet, updates, log_func, batch_size=20):
+def safe_batch_update(sheet, updates, log_func, batch_size=25):
     total_len = len(updates)
     for i in range(0, total_len, batch_size):
         chunk = updates[i:i + batch_size]
@@ -44,70 +42,87 @@ def safe_batch_update(sheet, updates, log_func, batch_size=20):
         for attempt in range(max_retries):
             try:
                 sheet.batch_update(chunk)
-                time.sleep(0.4)
+                time.sleep(0.3)
                 break
             except Exception as e:
                 if attempt < max_retries - 1:
-                    log_func(f"⚠️ API bekleniyor (Deneme {attempt+1}/{max_retries})...")
+                    log_func(f"⚠️ Google Sheets API İstek Limiti (Deneme {attempt+1}/{max_retries})...")
                     time.sleep(2)
                 else:
                     log_func(f"❌ Güncelleme Hatası: {str(e)}")
                     raise e
 
+def get_available_spreadsheets(creds_input):
+    try:
+        if isinstance(creds_input, dict):
+            creds = Credentials.from_service_account_info(creds_input, scopes=SCOPES)
+        else:
+            creds = Credentials.from_service_account_file(creds_input, scopes=SCOPES)
+        client = gspread.authorize(creds)
+        files = client.list_spreadsheet_files()
+        all_sheets = {f['name']: f['id'] for f in files}
+        return {"all": all_sheets, "source": all_sheets, "report": all_sheets}
+    except Exception as e:
+        return {"error": str(e), "all": {}, "source": {}, "report": {}}
+
 # ==========================================
-# 🧠 AI (ARTIFICIAL INTELLIGENCE) MAPPING
+# 🧠 AI (ARTIFICIAL INTELLIGENCE) ENGINE
 # ==========================================
 
-def ai_column_mapper(source_sheets_list, target_headers, log_func, api_key=OPENAI_API_KEY):
+def ai_column_mapper(source_sheets_list, target_headers, log_func, api_key=None):
     """
-    Yapay zeka (GPT-4o) kaynak sekme isimlerini ve ana tablonun başlıklarını okur,
-    bir insan QA Yöneticisi gibi hangi sekmenin hangi ana sütuna yazılacağını eşler.
+    Yapay Zeka (OpenAI), kaynak sekmeler ile hedef rapordaki sütunları insan gibi okur ve eşler.
     """
-    client = openai.OpenAI(api_key=api_key)
+    # API Anahtarını Sistem Değişkeni veya Parametreden Al
+    final_key = api_key or os.getenv("OPENAI_API_KEY")
+    if not final_key:
+        log_func("⚠️ OpenAI API Anahtarı girilmedi! Standart eşleştirme kullanılacak.")
+        return {}
+
+    client = openai.OpenAI(api_key=final_key)
     
     prompt = f"""
-    Sen uzman bir QA Veri Analistisin. 
-    Aşağıda kaynak tablodaki sekme adları (çeşitli dillerde olabilir) ve hedef rapordaki sütun başlıkları verilmiştir.
+    Sen kıdemli bir QA Yöneticisisin. 
+    Kaynak tablodaki sekme adları (farklı dillerde yazılmış olabilir) ve hedef rapordaki sütun başlıkları verilmiştir.
 
-    Kaynak Sekme İsimleri: {source_sheets_list}
-    Hedef Tablo Sütun Başlıkları: {target_headers}
+    Kaynak Sekme Adları: {source_sheets_list}
+    Hedef Tablo Başlıkları: {target_headers}
 
     GÖREVİN:
-    1. Kaynak sekmeleri incele. Eğer sekme adı bir TEST sekmesi ise (örnek: '0 Kul. TESTİ', 'Test', '0 Kullanıcı' vb.) bunu pas geç (null yap).
-    2. Geri kalan sekmeleri mantıksal olarak hedef sütun başlıklarıyla eşleştir:
-       - 'Mission Card', 'Zula Pass', 'Cartão de Missão', 'Tarjeta de Misión' vb. -> Zula Pass/Görev Kartı ile ilgili sütuna.
-       - 'General Check', 'Genel', 'Verificação Geral', 'Revisión General' vb. -> Genel ile ilgili sütuna.
-       - 'Error Reporting', 'Hata', 'Relatório de Erros' vb. -> Hata Raporlama ile ilgili sütuna.
-    
-    SADECE SIKI BIR JSON FORMATI DÖNDÜR.
-    Format Örneği:
+    1. '0 Kul. TESTİ', 'Test', '0Kullanıcı' gibi test amaçlı sekmeleri pas geç ve değerini `null` yap.
+    2. Sekme adlarının anlamsal karşılığını hedef tablodaki tam başlık metniyle eşleştir:
+       - Örn: 'Mission Card', 'Cartão de Missão', 'Tarjeta de Misión', 'Zula Pass' -> Hedefteki karşılık gelen başlığa.
+       - Örn: 'General Check', 'Verificação Geral', 'Revisión General', 'Genel' -> Hedefteki karşılık gelen başlığa.
+       - Örn: 'Error Reporting', 'Relatório de Erros', 'Reporte de Errores', 'Hata' -> Hedefteki karşılık gelen başlığa.
+
+    SADECE aşağıdaki JSON formatında bir veri döndür, açıklama yazma:
     {{
-      "Mission Card": "Zula Pass",
-      "0 Kul. TESTİ": null,
-      "General Check": "Genel"
+      "Sekme Adı 1": "Hedef Tablo Başlığı A",
+      "Sekme Adı 2": null,
+      "Sekme Adı 3": "Hedef Tablo Başlığı B"
     }}
     """
     
     try:
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o-mini", # Hızlı ve ekonomik model
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
             temperature=0.0
         )
         mapping_result = json.loads(response.choices[0].message.content)
-        log_func(f"🤖 AI Analiz Sonucu Eşleşmeleri: {mapping_result}")
+        log_func(f"🤖 AI Sekme-Sütun Haritasını Oluşturdu: {json.dumps(mapping_result, ensure_ascii=False)}")
         return mapping_result
     except Exception as e:
-        log_func(f"⚠️ AI Analizinde hata oluştu, standart mantık kullanılacak: {str(e)}")
+        log_func(f"⚠️ AI Analizinde Hata: {str(e)}")
         return {}
 
 # ==========================================
-# 🚀 QA REPORT WORKER (AI DESTEKLİ)
+# 🚀 QA REPORT WORKER (PANELE ENTEGRE)
 # ==========================================
 
 class QAReportWorker:
-    def __init__(self, creds_input, source_id, report_id, selected_lang, selected_year, selected_month, log_callback, progress_callback, api_key=OPENAI_API_KEY):
+    def __init__(self, creds_input, source_id, report_id, selected_lang, selected_year, selected_month, log_callback, progress_callback, openai_api_key=None):
         self.creds_input = creds_input
         self.source_id = source_id
         self.report_id = report_id
@@ -116,7 +131,7 @@ class QAReportWorker:
         self.selected_month_str = selected_month
         self.log = log_callback
         self.progress = progress_callback
-        self.api_key = api_key
+        self.openai_api_key = openai_api_key
 
     def connect(self):
         if isinstance(self.creds_input, dict):
@@ -149,7 +164,7 @@ class QAReportWorker:
         return report_wb.sheet1
 
     def process(self):
-        self.log(f"🧠 AI Destekli Kontrol Başlatıldı | Dil: [{self.selected_lang}] | Dönem: [{self.selected_month_str} {self.selected_year}]")
+        self.log(f"🧠 AI Kontrol paneli başlatıldı | Dil: [{self.selected_lang}] | Dönem: [{self.selected_month_str} {self.selected_year}]")
         self.progress(10)
         client = self.connect()
 
@@ -157,7 +172,7 @@ class QAReportWorker:
         report_wb = client.open_by_key(self.report_id)
         
         target_sheet = self.get_target_worksheet(report_wb)
-        self.log(f"Hedef Tablo Sekmesi: [{target_sheet.title}]")
+        self.log(f"🎯 Hedef Tablo Sekmesi: [{target_sheet.title}]")
         self.progress(20)
 
         target_rows = target_sheet.get_all_values()
@@ -170,9 +185,9 @@ class QAReportWorker:
         source_worksheets = source_wb.worksheets()
         source_titles = [ws.title.strip() for ws in source_worksheets]
 
-        # 🤖 AI İNSAN GİBİ TABLOLARI VE SÜTUNLARI İNCELEYİP EŞLEŞTİRİYOR
-        self.log("🔍 Yapay Zeka sekmeleri ve hedef sütunları analiz ediyor...")
-        ai_map = ai_column_mapper(source_titles, target_headers, self.log, self.api_key)
+        # AI Haritalandırmayı Çalıştır
+        self.log("🤖 Yapay Zeka tablodaki sütunları ve sekmeleri inceliyor...")
+        ai_map = ai_column_mapper(source_titles, target_headers, self.log, self.openai_api_key)
         self.progress(40)
 
         category_counts = {}
@@ -182,12 +197,11 @@ class QAReportWorker:
             mapped_target_header = ai_map.get(ws_title)
 
             if not mapped_target_header:
-                self.log(f"🚫 AI Tarafından Pas Geçildi (Test/İlişkisiz): [{ws_title}]")
+                self.log(f"🚫 Es Geçildi (Test/İlişkisiz): [{ws_title}]")
                 continue
 
-            self.log(f"📊 AI Okuyor: Sekme [{ws_title}] ➔ Hedef Sütun: '{mapped_target_header}'")
+            self.log(f"📊 Sekme Okunuyor: [{ws_title}] ➔ Hedef Sütun: '{mapped_target_header}'")
             
-            # Sekmedeki verileri topla
             raw_rows = ws.get_all_values()
             if len(raw_rows) <= 1:
                 continue
@@ -203,7 +217,7 @@ class QAReportWorker:
             for row in raw_rows[1:]:
                 if row and len(row) > user_col_idx:
                     u_name = str(row[user_col_idx]).strip()
-                    if u_name and not any(tot in u_name.lower() for tot in ["toplam", "total"]):
+                    if u_name and not any(tot in u_name.lower() for tot in ["toplam", "total", "sum"]):
                         counts[u_name] += 1
 
             if mapped_target_header not in category_counts:
@@ -212,7 +226,7 @@ class QAReportWorker:
 
         self.progress(70)
 
-        # Hedef tablodaki kullanıcı sütununu bul
+        # Hedef tablodaki kullanıcı adlarının olduğu sütunu bul
         user_col_in_target = 0
         for idx, h in enumerate(target_headers):
             h_norm = normalize_text(h)
@@ -227,7 +241,7 @@ class QAReportWorker:
                 if u_name:
                     target_users.append((row_idx, u_name))
 
-        # Hücre güncellemelerini hazırla
+        # Hücre Güncellemelerini Hazırla
         cell_updates = []
         
         for target_col_header, u_counts in category_counts.items():
@@ -237,10 +251,11 @@ class QAReportWorker:
             target_c_idx = target_headers.index(target_col_header)
             
             for row_idx, t_name in target_users:
-                # Kullanıcı eşleştirme
                 score = 0
+                t_norm = normalize_text(t_name)
                 for src_name, count in u_counts.items():
-                    if normalize_text(t_name) in normalize_text(src_name) or normalize_text(src_name) in normalize_text(t_name):
+                    s_norm = normalize_text(src_name)
+                    if t_norm in s_norm or s_norm in t_norm:
                         score += count
 
                 if score > 0:
@@ -253,10 +268,10 @@ class QAReportWorker:
         self.progress(90)
 
         if cell_updates:
-            self.log(f"✍️ AI Verileri [{target_sheet.title}] sekmesine işliyor... ({len(cell_updates)} hücre)")
+            self.log(f"✍️ Veriler Google Sheets [{target_sheet.title}] sekmesine aktarılıyor... ({len(cell_updates)} hücre)")
             safe_batch_update(target_sheet, cell_updates, self.log)
             self.progress(100)
-            self.log("✅ İŞLEM BAŞARILI! AI tabloyu insan gibi kontrol edip verileri eksiksiz işledi.")
+            self.log("✅ İŞLEM BAŞARILI! AI tabloyu kontrol edip tüm sütunları eksiksiz işledi.")
         else:
             self.progress(100)
             self.log("⚠️ Aktarılacak uygun veri bulunamadı.")
