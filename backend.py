@@ -71,8 +71,8 @@ class QAReportWorker:
         return None
 
     def get_target_worksheet(self, report_wb):
+        """ENG Temmuz 2026 gibi hedef sekleyi bulur."""
         all_worksheets = report_wb.worksheets()
-        
         target_lang = self.selected_lang.lower().strip()
         target_month = self.selected_month_str.lower().strip()
         target_year = str(self.selected_year).strip()
@@ -94,29 +94,14 @@ class QAReportWorker:
 
         return report_wb.sheet1
 
-    def process(self):
-        self.log("Google Sheets servisine bağlanılıyor...")
-        self.progress(10)
-        client = self.connect()
+    def count_user_reports_in_sheet(self, sheet):
+        """Verilen sekmedeki kullanıcı rapor sayılarını filtreleyerek hesaplar."""
+        raw_rows = sheet.get_all_values()
+        if not raw_rows or len(raw_rows) <= 1:
+            return Counter()
 
-        source_wb = client.open_by_key(self.source_id)
-        source_sheet = source_wb.sheet1
-
-        report_wb = client.open_by_key(self.report_id)
-        report_sheet = self.get_target_worksheet(report_wb)
-
-        self.log(f"Kaynak: [{source_wb.title}] ➔ Hedef Sekme: [{report_sheet.title}]")
-        self.progress(30)
-        
-        raw_source_rows = source_sheet.get_all_values()
-
-        if not raw_source_rows or len(raw_source_rows) <= 1:
-            self.log("⚠️ Kaynak tabloda işlenecek veri bulunamadı.")
-            self.progress(100)
-            return
-
-        headers = [str(h).strip().lower() for h in raw_source_rows[0]]
-        data_rows = raw_source_rows[1:]
+        headers = [str(h).strip().lower() for h in raw_rows[0]]
+        data_rows = raw_rows[1:]
 
         date_col_idx = 0
         user_col_idx = -1
@@ -125,21 +110,16 @@ class QAReportWorker:
             if any(u in h for u in ["name-surname", "name", "surname", "ad soyad", "kullanıcı", "user"]):
                 user_col_idx = idx
                 break
-
         if user_col_idx == -1:
             user_col_idx = 1
 
-        self.log(f"Kullanıcı Adı Sütunu: Index {user_col_idx} ('{raw_source_rows[0][user_col_idx]}')")
-        self.progress(50)
-
-        user_counts = Counter()
-        matched_rows_count = 0
-        fallback_month_counts = Counter()
+        counts = Counter()
+        fallback_counts = Counter()
 
         for row_vals in data_rows:
             if not any(row_vals):
                 continue
-
+            
             user_name = "Bilinmeyen Kullanıcı"
             if user_col_idx < len(row_vals):
                 val = str(row_vals[user_col_idx]).strip()
@@ -149,35 +129,118 @@ class QAReportWorker:
             if date_col_idx < len(row_vals):
                 date_val = row_vals[date_col_idx]
                 dt = self.parse_date(date_val)
-                
                 if dt:
                     if dt.year == self.selected_year and dt.month == self.selected_month_num:
-                        matched_rows_count += 1
-                        user_counts[user_name] += 1
+                        counts[user_name] += 1
                     elif dt.month == self.selected_month_num:
-                        fallback_month_counts[user_name] += 1
+                        fallback_counts[user_name] += 1
 
-        if matched_rows_count == 0 and fallback_month_counts:
-            self.log(f"ℹ️ {self.selected_year} yılına ait veri bulunamadı, fakat kaynak tabloda {self.selected_month_str} ayına ait kayıtlar bulundu. Sadece Ay bazlı hesaplama yapılıyor.")
-            user_counts = fallback_month_counts
-            matched_rows_count = sum(fallback_month_counts.values())
+        return counts if sum(counts.values()) > 0 else fallback_counts
 
-        self.progress(80)
+    def process(self):
+        self.log("Google Sheets servisine bağlanılıyor...")
+        self.progress(10)
+        client = self.connect()
 
-        if matched_rows_count == 0:
+        source_wb = client.open_by_key(self.source_id)
+        report_wb = client.open_by_key(self.report_id)
+        target_sheet = self.get_target_worksheet(report_wb)
+
+        self.log(f"Hedef Sekme Tespit Edildi: [{target_sheet.title}]")
+        self.progress(25)
+
+        # 1. Kaynak Tablodaki Sekmeleri Oku (0 Kullanıcı Testi HARİÇ TUTULUR)
+        source_worksheets = source_wb.worksheets()
+        
+        # Sekme İsimleri ➔ Hedef Tablo Sütun Adı Eşleşmesi
+        category_counts = {}
+
+        for ws in source_worksheets:
+            ws_title = ws.title.strip()
+            title_lower = ws_title.lower()
+
+            # "0 Kullanıcı" testi tamamen atlanıyor (İşleme alınmayacak)
+            if "0 kullanıcı" in title_lower or "0 kul" in title_lower or "new user test" in title_lower:
+                self.log(f"🚫 Pas geçildi: [{ws_title}] (0 Kullanıcı Testi işlenmeyecek)")
+                continue
+
+            # Hedef Sütun İsmi Belirleme
+            target_col_name = ""
+            if "mission card" in title_lower or "pass" in title_lower:
+                target_col_name = "Zula Pass"
+            elif "general check" in title_lower or "genel" in title_lower:
+                target_col_name = "Genel"
+            else:
+                target_col_name = ws_title
+
+            self.log(f"📊 İşleniyor: [{ws_title}] ➔ Hedef Sütun: '{target_col_name}'")
+            user_counts = self.count_user_reports_in_sheet(ws)
+            category_counts[target_col_name] = user_counts
+
+        self.progress(60)
+
+        # 2. Ana Tablonun (ENG Temmuz 2026) Yapısını Oku ve Güncelle
+        target_rows = target_sheet.get_all_values()
+        if not target_rows:
+            self.log("⚠️ Hedef sekmede başlık yapısı bulunamadı!")
             self.progress(100)
-            self.log(f"⚠️ Seçilen {self.selected_month_str} ayına ait hiçbir kayıt bulunamadı.")
             return
 
-        summary_rows = [[user, count] for user, count in user_counts.items()]
+        target_headers = [str(h).strip() for h in target_rows[0]]
+        
+        # Kullanıcı isimlerinin olduğu sütunu bul (Genelde A veya B)
+        user_col_in_target = 0
+        for idx, h in enumerate(target_headers):
+            if any(k in h.lower() for k in ["kullanıcı", "user", "name", "qa", "ad"]):
+                user_col_in_target = idx
+                break
 
-        self.log(f"Hesaplandı: {matched_rows_count} rapor kaydı incelendi, {len(summary_rows)} kullanıcının sayıları aktarılıyor...")
+        self.log(f"Ana Tablo Sütunları: {target_headers}")
 
-        report_sheet.clear()
-        header_row = ["Kullanıcı Adı / QA (Name-Surname)", f"Rapor Sayısı ({self.selected_month_str} {self.selected_year})"]
-        all_data_to_write = [header_row] + summary_rows
+        # Her kategori için sütun indekslerini eşleştir
+        col_index_map = {}
+        for cat_name in category_counts.keys():
+            for idx, h in enumerate(target_headers):
+                if cat_name.lower() in h.lower():
+                    col_index_map[cat_name] = idx
+                    break
 
-        report_sheet.append_rows(all_data_to_write)
+        # Hücre güncellemelerini hazırla
+        cell_updates = []
+        
+        for row_idx, row in enumerate(target_rows[1:], start=2): # 2. satırdan itibaren veriler
+            if not row or user_col_in_target >= len(row):
+                continue
+            
+            user_name_in_target = str(row[user_col_in_target]).strip().lower()
+            if not user_name_in_target:
+                continue
 
-        self.progress(100)
-        self.log(f"✅ İŞLEM BAŞARILI! {len(summary_rows)} kullanıcının rapor sayıları [{report_sheet.title}] sekmesine yazıldı.")
+            # Her kategori için eşleşen kullanıcı sayısını bul ve yaz
+            for cat_name, u_counts in category_counts.items():
+                if cat_name in col_index_map:
+                    target_c_idx = col_index_map[cat_name]
+                    
+                    # İsmi esnek eşleştir
+                    matched_count = 0
+                    for u_src, count in u_counts.items():
+                        if u_src.lower() in user_name_in_target or user_name_in_target in u_src.lower():
+                            matched_count = count
+                            break
+                    
+                    cell_updates.append({
+                        'range': gspread.utils.rowcol_to_a1(row_idx, target_c_idx + 1),
+                        'values': [[matched_count if matched_count > 0 else ""]]
+                    })
+
+        self.progress(85)
+
+        # 3. Güncellemeleri Bozulma Olmadan Toplu Yaz
+        if cell_updates:
+            self.log("Veriler biçimlendirmeler korunarak ana tabloya aktarılıyor...")
+            target_sheet.batch_update(cell_updates)
+            self.progress(100)
+            self.log(f"✅ İŞLEM BAŞARILI! [{target_sheet.title}] sekmesindeki 'Zula Pass' ve 'Genel' sütunları güncellendi ('0 Kul. TESTİ' sütununa dokunulmadı).")
+        else:
+            self.progress(100)
+            self.log("⚠️ Eşleşen kullanıcı verisi bulunamadı veya güncellenecek veri yok.")
