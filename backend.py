@@ -15,9 +15,7 @@ MONTH_MAP = {
 def get_available_spreadsheets(creds_input):
     """
     Drive üzerindeki tüm tabloları getirir.
-    Rapor ve Kaynak tablolarının yerlerini tam tersine çevirir:
-    - Adında 'rapor', 'report', 'relatório' geçenler -> Kaynak Tablo (Source Sheet)
-    - Diğer takip/çalışma tabloları -> Rapor Tablosu (Report Sheet)
+    Rapor ve Kaynak tablolarını ayrıştırır.
     """
     if isinstance(creds_input, dict):
         creds = Credentials.from_service_account_info(creds_input, scopes=SCOPES)
@@ -36,13 +34,11 @@ def get_available_spreadsheets(creds_input):
 
     for name, fid in all_sheets.items():
         name_lower = name.lower()
-        # Yerler değiştirildi: Rapor isimli dosyalar Kaynak Tabloya ekleniyor
         if any(keyword in name_lower for keyword in report_keywords):
             source_sheets[name] = fid
         else:
             report_sheets[name] = fid
 
-    # Güvenlik önlemleri
     if not report_sheets:
         report_sheets = all_sheets.copy()
     if not source_sheets:
@@ -73,6 +69,18 @@ class QAReportWorker:
             creds = Credentials.from_service_account_file(self.creds_input, scopes=SCOPES)
         return gspread.authorize(creds)
 
+    def parse_date(self, date_val):
+        """Tarih formatlarını (DD.MM.YYYY veya YYYY-MM-DD) otomatik çözümleme"""
+        if not date_val:
+            return None
+        date_str = str(date_val).strip()
+        for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y"):
+            try:
+                return datetime.datetime.strptime(date_str, fmt)
+            except ValueError:
+                continue
+        return None
+
     def process(self):
         self.log("Google Sheets servisine bağlanılıyor...")
         self.progress(10)
@@ -86,16 +94,54 @@ class QAReportWorker:
         self.log("Veriler okunuyor...")
         self.progress(40)
         source_data = source_sheet.get_all_records()
-        report_data = report_sheet.get_all_records()
 
         self.log(f"Filtreler uygulanıyor: Yıl={self.selected_year}, Ay={self.selected_month_str}, Dil={self.selected_lang}")
         self.progress(60)
 
-        processed_count = len(source_data)
-        
-        self.log(f"Toplam {processed_count} kayıt başarıyla işlendi.")
-        self.progress(90)
+        filtered_rows = []
+        for row in source_data:
+            # Sütun adlarını küçük harfe çevirerek dinamik kontrol
+            row_lower = {str(k).lower(): v for k, v in row.items()}
+            
+            # Tarih sütununu bul (ESP: fecha / TR: tarih / POR: data vb.)
+            date_val = None
+            for key in row_lower:
+                if any(t in key for t in ["tarih", "date", "fecha", "data"]):
+                    date_val = row_lower[key]
+                    break
 
-        self.log("Rapor tablosu güncelleniyor...")
-        self.progress(100)
-        self.log("İşlem başarıyla tamamlandı!")
+            dt = self.parse_date(date_val)
+            
+            # Tarih eşleşmiyorsa atla
+            if dt:
+                if dt.year != self.selected_year or dt.month != self.selected_month_num:
+                    continue
+
+            # Dil filtresi uygulanıyorsa ve "Tümü" değilse kontrol et
+            if self.selected_lang != "Tümü":
+                # Eğer satırda dil belirteci varsa kontrol et
+                lang_val = ""
+                for key in row_lower:
+                    if any(l in key for l in ["dil", "lang", "idioma"]):
+                        lang_val = str(row_lower[key]).upper()
+                        break
+                
+                # Tabloda dil sütunu varsa ve seçilen dile (örn: ESP) eşit değilse atla
+                if lang_val and self.selected_lang not in lang_val:
+                    continue
+
+            # Uygun satırı rapora aktarılacak listeye ekle
+            filtered_rows.append(list(row.values()))
+
+        self.log(f"Filtreye uygun toplam {len(filtered_rows)} kayıt bulundu.")
+        self.progress(80)
+
+        if filtered_rows:
+            self.log("Rapor tablosuna aktarılıyor...")
+            # Bulunan verileri Rapor tablosuna ekler
+            report_sheet.append_rows(filtered_rows)
+            self.progress(100)
+            self.log("İşlem başarıyla tamamlandı!")
+        else:
+            self.progress(100)
+            self.log("⚠️ Seçilen ay/yıl/dil kriterlerine uygun kayıt bulunamadı.")
