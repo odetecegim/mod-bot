@@ -13,13 +13,12 @@ st.set_page_config(
 st.title("📊 QA Rapor Otomasyonu")
 
 # ==========================================
-# 🔑 AKILLI CREDENTIALS PARSER (Büyük/Küçük Harf ve Bölüm Bağışlayıcı)
+# 🔑 AKILLI CREDENTIALS PARSER
 # ==========================================
 
 creds_input = None
 
 if hasattr(st, "secrets") and len(st.secrets) > 0:
-    # 1. Büyük / Küçük harf fark etmeksizin GCP bölümünü ara
     target_sec = None
     for k in st.secrets:
         if k.lower() in ["gcp_service_account", "credentials", "service_account"]:
@@ -27,18 +26,13 @@ if hasattr(st, "secrets") and len(st.secrets) > 0:
             break
             
     if target_sec:
-        # Dictionary olarak al
         c_dict = dict(target_sec)
-        
-        # Eğer [USERS] araya girdiği için client_id eksik kaldıysa ana secrets'tan tamamla
         required_keys = ["client_id", "auth_uri", "token_uri", "auth_provider_x509_cert_url", "client_x509_cert_url"]
         for r_key in required_keys:
             if r_key not in c_dict and r_key in st.secrets:
                 c_dict[r_key] = st.secrets[r_key]
-                
         creds_input = c_dict
 
-# Yerel dosya yedek kontrolü
 if not creds_input:
     for f_name in ["credentials.json", "service_account.json"]:
         if os.path.exists(f_name):
@@ -54,10 +48,8 @@ if not creds_input:
     st.stop()
 
 # ==========================================
-# 📁 DRIVER / ETABLO SEÇİM ALANI
+# 📁 ETABLO SEÇİM ALANI (ANA EKRAN)
 # ==========================================
-
-st.sidebar.header("⚙️ Ayarlar & Dosya Seçimi")
 
 sheets_data = get_available_spreadsheets(creds_input)
 all_sheets = sheets_data.get("all", {})
@@ -72,19 +64,28 @@ if not all_sheets:
 
 sorted_sheet_names = sorted(list(all_sheets.keys()))
 
-selected_source_name = st.sidebar.selectbox(
-    "📁 Kaynak (Ham Veri) Dosyası:",
-    options=sorted_sheet_names,
-    index=0
-)
-source_id = all_sheets[selected_source_name]
+st.subheader("⚙️ Dosya Seçimleri")
+col_src, col_rep = st.columns(2)
 
-selected_report_name = st.sidebar.selectbox(
-    "🎯 Hedef (Ana Rapor) Dosyası:",
-    options=sorted_sheet_names,
-    index=min(1, len(sorted_sheet_names) - 1)
-)
-report_id = all_sheets[selected_report_name]
+with col_src:
+    selected_source_name = st.selectbox(
+        "📁 Kaynak (Ham Veri) Dosyası:",
+        options=sorted_sheet_names,
+        index=0,
+        help="İşlenecek veri tablosunu seçin (Örn: Error Reporting ENG, POR, ESP, TR)"
+    )
+    source_id = all_sheets[selected_source_name]
+
+with col_rep:
+    # Hedef varsayılan olarak 2. dosyayı seçer
+    default_rep_idx = 1 if len(sorted_sheet_names) > 1 else 0
+    selected_report_name = st.selectbox(
+        "🎯 Hedef (Ana Konsolide Rapor) Dosyası:",
+        options=sorted_sheet_names,
+        index=default_rep_idx,
+        help="Puanların yazılacağı ANA Konsolide Rapor dosyasını seçin."
+    )
+    report_id = all_sheets[selected_report_name]
 
 # ==========================================
 # 📅 FİLTRE VE DİL SEÇİMLERİ
@@ -103,6 +104,7 @@ with col_year:
     years = [2024, 2025, 2026, 2027]
     selected_year = st.selectbox("📆 Yıl Seçimi:", options=years, index=2)
 
+# Bilgi Kutusu
 st.info(
     f"📌 **Seçilen İşlem Detayları:**\n\n"
     f"- **Kaynak Dosya:** `{selected_source_name}` *(ID: {source_id})*\n"
