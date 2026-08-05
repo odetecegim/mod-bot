@@ -537,4 +537,4 @@ elif page == "📅 Aylık Raporlar":
                 else:
                     st.warning("⚠️ Seçilen sekme boş!")
         except Exception as e:
-            st.error(f"❌ Rapor okuma hatası: {e}")s
+            st.error(f"❌ Rapor okuma hatası: {e}")
