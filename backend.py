@@ -18,7 +18,6 @@ SCOPES = [
 # ==========================================
 
 def clean_name_string(text):
-    """İsimleri karşılaştırmadan önce tüm aksan, özel karakter ve boşluklardan arındırır."""
     if not text:
         return ""
     text = str(text).strip().lower()
@@ -50,7 +49,7 @@ def normalize_text(text):
 
 _MONTH_MAP_RAW = {
     "ocak": 1, "şubat": 2, "mart": 3, "nisan": 4, "mayıs": 5, "haziran": 6,
-    "temmuz": 7, "ağustos": 8, "eylül": 9, "ekim": 10, "kasım": 11, "aralık": 12,
+    "temmuz": 7, "ağustos": 8, "eylül": 9, "eylul": 9, "ekim": 10, "kasım": 11, "aralık": 12,
     "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
     "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12,
     "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
@@ -128,7 +127,7 @@ def get_available_spreadsheets(creds_input):
 
 class BaseLanguageHandler:
     def is_ignored_sheet(self, norm_title):
-        ignore_keywords = ["0kullanici", "0kul", "test", "old"]
+        ignore_keywords = ["0kullanici", "0kul", "0usuario", "0jugador", "test", "old"]
         return any(k in norm_title for k in ignore_keywords)
 
     def parse_date(self, date_val):
@@ -140,7 +139,7 @@ class BaseLanguageHandler:
             return None, None
 
         clean_date = re.split(r'\s+', str_val)[0]
-        for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d.%m.%y", "%d/%m/%y"):
+        for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d.%m.%y", "%d/%m/%y", "%Y/%m/%d"):
             try:
                 dt = datetime.datetime.strptime(clean_date, fmt)
                 return dt.month, dt.year
@@ -150,17 +149,14 @@ class BaseLanguageHandler:
         return None, None
 
 class AllLanguagesHandler(BaseLanguageHandler):
-    """ENG, ESP ve POR sekmelerini destekleyen birleşik handler."""
     def map_category(self, ws_title):
         norm = normalize_text(ws_title)
         if self.is_ignored_sheet(norm):
             return None
         
-        # Günlük Görev / Mission Card
-        if any(k in norm for k in ["mision", "mission", "cartaodemissao", "tarjeta", "zulapass", "gunluk", "gkarti", "pass", "kart"]):
+        if any(k in norm for k in ["mision", "misiones", "mission", "cartaodemissao", "tarjeta", "tarjetas", "zulapass", "pase", "gunluk", "gkarti", "pass", "kart"]):
             return "G. Kartı (Günlük)"
-        # Genel Check
-        elif any(k in norm for k in ["verificacaogeral", "generalcheck", "genelcheck", "revision", "general", "geral", "check", "genel"]):
+        elif any(k in norm for k in ["verificacaogeral", "generalcheck", "genelcheck", "revision", "revisiones", "chequeo", "general", "geral", "check", "genel", "errores", "error"]):
             return "Genel Check"
             
         return None
@@ -193,48 +189,36 @@ class QAReportWorker:
         return gspread.authorize(creds)
 
     def get_target_worksheet(self, report_wb, source_title=""):
+        """Sıkı Yıl ve Ay Eşleşmesi Yapar. Eski yılların sekmesine düşmesini engeller."""
         all_worksheets = report_wb.worksheets()
         target_month = normalize_text(self.selected_month_str)
         target_year = str(self.selected_year).strip()
 
-        # Dili belirle (ENG, ESP, POR)
         detected_lang = ""
         if self.selected_lang in ["ENG", "ESP", "POR"]:
             detected_lang = self.selected_lang.lower()
         else:
-            # "Tümü" seçildiyse kaynak dosyanın başlığından tespit et
             s_title_upper = source_title.upper()
             for lang in ["ENG", "ESP", "POR"]:
                 if lang in s_title_upper:
                     detected_lang = lang.lower()
                     break
 
-        # 1. Aşama: Hem Dil, hem Ay hem de Yıl geçen tam eşleşen sekme (Örn: "ENG TEMMUZ 2026")
+        # 1. Aşama: Dil + Ay + Yıl Sıkı Eşleşmesi (Örn: "ENG Mart 2028")
         if detected_lang:
             for ws in all_worksheets:
                 t_lower = normalize_text(ws.title)
                 if detected_lang in t_lower and target_month in t_lower and target_year in t_lower:
                     return ws
 
-            # 1.b Aşama: Dil ve Ay geçen sekme
-            for ws in all_worksheets:
-                t_lower = normalize_text(ws.title)
-                if detected_lang in t_lower and target_month in t_lower:
-                    return ws
-
-        # 2. Aşama: Dil bulunamadıysa sadece Ay ve Yıl adının geçtiği sekme
+        # 2. Aşama: Ay + Yıl Eşleşmesi (Örn: "Mart 2028")
         for ws in all_worksheets:
             t_lower = normalize_text(ws.title)
             if target_month in t_lower and target_year in t_lower:
                 return ws
 
-        # 3. Aşama: Sadece Ay adının geçtiği sekme
-        for ws in all_worksheets:
-            t_lower = normalize_text(ws.title)
-            if target_month in t_lower:
-                return ws
-
-        return report_wb.sheet1
+        # Eğer seçilen YIL ve AY hedef dosyada tam eşleşmezse HATA VER ve işlemi kes!
+        raise ValueError(f"Hedef dosyada '{self.selected_month_str} {self.selected_year}' dönemine ait sekme bulunamadı!")
 
     def count_user_reports_in_sheet(self, sheet):
         try:
@@ -253,7 +237,10 @@ class QAReportWorker:
         user_col_indices = []
 
         for idx, h in enumerate(headers):
-            if any(u in h for u in ["nombre", "apellido", "nick", "personaje", "kullanici", "user", "name", "qa", "reporter"]):
+            if any(u in h for u in [
+                "nombre", "apellido", "nick", "personaje", "kullanici", "user", 
+                "name", "qa", "reporter", "jugador", "usuario", "reportador", "tester"
+            ]):
                 user_col_indices.append(idx)
 
         if not user_col_indices:
@@ -268,6 +255,7 @@ class QAReportWorker:
             date_val = row_vals[date_col_idx] if date_col_idx < len(row_vals) else None
             m_num, y_num = self.handler.parse_date(date_val)
 
+            # Tarih yıl/ay kontrolü
             if y_num and y_num != self.selected_year:
                 continue
             if m_num and m_num != self.selected_month_num:
@@ -277,7 +265,7 @@ class QAReportWorker:
             for u_idx in user_col_indices:
                 if u_idx < len(row_vals):
                     val = str(row_vals[u_idx]).strip()
-                    if val and not any(tot in val.lower() for tot in ["toplam", "total", "sum", "nombre", "nick"]):
+                    if val and not any(tot in val.lower() for tot in ["toplam", "total", "sum", "nombre", "nick", "usuario", "jugador"]):
                         primary_name = val
                         break
 
@@ -294,7 +282,7 @@ class QAReportWorker:
         source_wb = client.open_by_key(self.source_id)
         report_wb = client.open_by_key(self.report_id)
         
-        # Hedef sekmeyi kaynak dosya ismine/dile göre akıllı bul
+        # Hedef sekme tespiti (Bulunamazsa ValueError fırlatır)
         target_sheet = self.get_target_worksheet(report_wb, source_title=source_wb.title)
         self.log(f"Hedef Rapor Sekmesi: [{target_sheet.title}]")
         self.progress(25)
@@ -337,7 +325,10 @@ class QAReportWorker:
         user_col_in_target = 0
         for idx, h in enumerate(target_headers):
             h_norm = normalize_text(h)
-            if any(k in h_norm for k in ["kullanici", "user", "name", "qa", "ad", "apelido", "nombre", "sobrenome", "apellido", "oyuncu", "tester"]):
+            if any(k in h_norm for k in [
+                "kullanici", "user", "name", "qa", "ad", "apelido", "nombre", 
+                "sobrenome", "apellido", "oyuncu", "tester", "jugador", "usuario", "nick"
+            ]):
                 user_col_in_target = idx
                 break
 
@@ -393,11 +384,11 @@ class QAReportWorker:
             safe_batch_update(target_sheet, cell_updates, self.log)
             self.progress(100)
             self.log(f"✅ İŞLEM BAŞARILI! Gerçek rapor sayıları D ve F sütunlarına aktarıldı.")
+            final_rows = target_sheet.get_all_values()
+            if final_rows and len(final_rows) > 1:
+                return pd.DataFrame(final_rows[1:], columns=final_rows[0])
+            return pd.DataFrame(final_rows)
         else:
             self.progress(100)
-            self.log(f"⚠️ Uyarı: Seçilen filtre kriterlerine uyan kayıt bulunamadı.")
-
-        final_rows = target_sheet.get_all_values()
-        if final_rows and len(final_rows) > 1:
-            return pd.DataFrame(final_rows[1:], columns=final_rows[0])
-        return pd.DataFrame(final_rows)
+            self.log(f"⚠️ Uyarı: Seçilen {self.selected_month_str} {self.selected_year} filtresine uyan veri bulunamadı.")
+            return None
