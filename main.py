@@ -224,7 +224,7 @@ if page == "🚀 Rapor Çalıştır":
 
     col_month, col_year = st.columns(2)
     with col_month:
-        months = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
+        months = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylul", "Ekim", "Kasım", "Aralık"]
         selected_month = st.selectbox("📅 Ay:", options=months)
     with col_year:
         years = [2026, 2027, 2028, 2029, 2030]
@@ -284,7 +284,7 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
             df_display,
             num_rows="dynamic",
             use_container_width=True,
-            key="genel_performans_editor_v4",
+            key="genel_performans_editor_v5",
             disabled=["Toplam", "ZA"]
         )
 
@@ -324,7 +324,7 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
             st.session_state["last_processed_df"] = edited_raw_df.copy()
 
         # ------------------------------------------------------------------
-        # 💾 GOOGLE SHEETS & MODBOT.LOG SENKRONİZASYON BUTONU (OTO YENİLEMELİ)
+        # 💾 GOOGLE SHEETS & MODBOT.LOG SENKRONİZASYON BUTONU
         # ------------------------------------------------------------------
         st.write("")
         col_save, _ = st.columns([1, 2])
@@ -350,7 +350,7 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
                             client = gspread.service_account(filename=creds_input)
                         
                         wb = client.open_by_key(rep_id)
-                        ws = wb.active
+                        ws = wb.sheet1  # DÜZELTME: wb.active yerine wb.sheet1 kullanıldı
                         
                         updated_df_to_save = st.session_state["last_processed_df"]
                         data_to_write = [updated_df_to_save.columns.tolist()] + updated_df_to_save.astype(str).values.tolist()
@@ -364,13 +364,13 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
                         )
                         st.toast("✅ Google Sheets ve ModBot.log güncellendi!", icon="🎉")
                         time.sleep(1)
-                        st.rerun()  # Otomatik yenileme
+                        st.rerun()
                     except Exception as e:
                         st.error(f"❌ Google Sheets kaydetme hatası: {e}")
 
         st.markdown("---")
         
-        # ⚡ İŞLE BUTONU (AY TABLOSUNA AKTAR - OTO YENİLEMELİ)
+        # ⚡ İŞLE BUTONU (AY TABLOSUNA AKTAR)
         st.subheader("⚡ ZA Miktarlarını Ay Tablosuna Aktar & Son Miktarı Hesapla")
         
         col_month_sel, col_btn = st.columns([2, 1])
@@ -408,7 +408,7 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
                         client = gspread.service_account(filename=creds_input)
 
                     wb = client.open_by_key(rep_id)
-                    ws = wb.active
+                    ws = wb.sheet1  # DÜZELTME: wb.active yerine wb.sheet1 kullanıldı
                     
                     log_msgs = []
                     success = process_za_and_insert_month(ws, target_month_to_process, log_func=lambda m: log_msgs.append(m))
@@ -420,7 +420,7 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
                         st.balloons()
                         st.success(f"🎉 ZA verileri [{target_month_to_process}] sütununa işlendi!")
                         time.sleep(1.5)
-                        st.rerun()  # Otomatik yenileme
+                        st.rerun()
                 except gspread.exceptions.SpreadsheetNotFound:
                     st.error(f"❌ Google Sheets Dosyası Bulunamadı! Lütfen Service Account e-postanıza bu tablo için 'Düzenleyen' yetkisi verdiğinizden emin olun.")
                 except Exception as e:
@@ -455,7 +455,7 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
             df_editable,
             num_rows="dynamic",
             use_container_width=True,
-            key="za_loader_editor_v4"
+            key="za_loader_editor_v5"
         )
 
         col_dl1, col_dl2 = st.columns(2)
@@ -537,4 +537,4 @@ elif page == "📅 Aylık Raporlar":
                 else:
                     st.warning("⚠️ Seçilen sekme boş!")
         except Exception as e:
-            st.error(f"❌ Rapor okuma hatası: {e}")
+            st.error(f"❌ Rapor okuma hatası: {e}")s
