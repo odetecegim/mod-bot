@@ -379,6 +379,38 @@ if submit_button:
                 progress_callback=progress_callback
             )
             
+          # --- İŞLEM BAŞLATMA ---
+if submit_button:
+    progress_bar = st.progress(0)
+
+    def silent_log_callback(msg):
+        pass
+
+    def progress_callback(val):
+        progress_bar.progress(val)
+
+    job_details = {
+        "source": source_name,
+        "report": report_name,
+        "month": selected_month,
+        "year": selected_year,
+        "user": current_user
+    }
+
+    try:
+        with st.spinner("⏳ Veriler Google Sheets üzerinden okunuyor ve işleniyor, lütfen bekleyin..."):
+            # Sekme uyumsuzluğunu aşmak için dinamik backend çağrısı
+            worker = QAReportWorker(
+                creds_input=creds_input,
+                source_id=source_id,
+                report_id=report_id,
+                selected_lang="Tümü",
+                selected_year=selected_year,
+                selected_month=selected_month,
+                log_callback=silent_log_callback,
+                progress_callback=progress_callback
+            )
+            
             # Raporu İşle
             updated_data = worker.process()
         
@@ -392,19 +424,20 @@ if submit_button:
         else:
             st.warning(f"⚠️ **{selected_month} {selected_year}** dönemi için filtrelenen veri boş döndü.")
             
-            # --- TEŞHİS / DEBUG KISMI ---
-            with st.expander("🔍 Tablo Yapısı Teşhisi (Neden Bulunamadı?)", expanded=True):
+            with st.expander("🔍 Tablo ve Sekme Teşhisi", expanded=True):
                 try:
-                    # Kaynak veriyi ham haliyle okuyup kontrol edelim
-                    raw_df = worker.load_source_data() if hasattr(worker, 'load_source_data') else None
-                    if raw_df is not None and not raw_df.empty:
-                        st.write("**Kaynak Tablodaki Sütunlar:**", list(raw_df.columns))
-                        st.write("**Kaynak Tablonun İlk 5 Satırı (Ham Veri):**")
-                        st.dataframe(raw_df.head(5), use_container_width=True)
+                    if isinstance(creds_input, str):
+                        gc = gspread.service_account(filename=creds_input)
                     else:
-                        st.error("Kaynak Tablo ham verisi bile okunamadı veya tablo tamamen boş.")
+                        gc = gspread.service_account_from_dict(creds_input)
+                    
+                    src_sh = gc.open_by_key(source_id)
+                    sheet_names = [ws.title for ws in src_sh.worksheets()]
+                    st.write(f"📌 **Seçilen Tablo:** `{src_sh.title}`")
+                    st.write(f"📑 **Mevcut Sekmeler:** `{sheet_names}`")
+                    st.info("💡 **Bilgi:** `backend.py` dosyasındaki sekme okuma fonksiyonunun bu sekme isimleriyle eşleştiğinden emin olun.")
                 except Exception as diag_err:
-                    st.info(f"Ham veri teşhis hatası: {diag_err}")
+                    st.error(f"Teşhis Bağlantı Hatası: {diag_err}")
 
     except Exception as e:
         import traceback
