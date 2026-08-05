@@ -77,7 +77,7 @@ def append_log_to_google_sheet(creds, status, details):
             sh = gc.create(LOG_SHEET_NAME)
             ws = sh.sheet1
             # Başlık satırını ekle
-            ws.append_row(["Tarih / Saat", "Kullanıcı", "Kaynak Tablo", "Rapor Tablosu", "Ay", "Yıl", "Durum", "Hata Detayı"])
+            ws.append_row(["Tarih / Saat", "İşlemi Yapan Kullanıcı", "Kaynak Tablo", "Rapor Tablosu", "Ay", "Yıl", "Durum", "Hata Detayı"])
 
         ws = sh.sheet1
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -324,7 +324,7 @@ current_year = now_dt.year
 years_list = [str(y) for y in range(max(2025, current_year - 1), current_year + 4)]
 default_year_idx = years_list.index(str(current_year)) if str(current_year) in years_list else 0
 
-# --- FORM VE BUTON HIZLI BAĞLANTILARI ---
+# --- FORM VE PARAMETRELER ---
 st.subheader("🛠️ Rapor Oluşturma Parametreleri")
 
 with st.form("qa_form"):
@@ -344,17 +344,8 @@ with st.form("qa_form"):
 
     submit_button = st.form_submit_button("🚀 Raporu Çalıştır ve Güncelle", use_container_width=True)
 
-# Seçili Tablo Hızlı Erişim Bağlantıları
 source_id = source_sheets_dict.get(source_name)
 report_id = report_sheets_dict.get(report_name)
-
-col_link1, col_link2 = st.columns(2)
-with col_link1:
-    if source_id:
-        st.markdown(f"🔗 [📄 Kaynak Sheet'e Git (Google Drive)](https://docs.google.com/spreadsheets/d/{source_id})")
-with col_link2:
-    if report_id:
-        st.markdown(f"🔗 [📊 Global Perf Sheet'e Git (Google Drive)](https://docs.google.com/spreadsheets/d/{report_id})")
 
 st.divider()
 
@@ -372,21 +363,35 @@ if submit_button:
         "source": source_name,
         "report": report_name,
         "month": selected_month,
-        "year": selected_year
+        "year": selected_year,
+        "user": current_user
     }
 
     try:
         with st.spinner("⏳ Veriler Google Sheets üzerinden okunuyor ve işleniyor, lütfen bekleyin..."):
-            worker = QAReportWorker(
-                creds_input=creds_input,
-                source_id=source_id,
-                report_id=report_id,
-                selected_lang="Tümü",
-                selected_year=selected_year,
-                selected_month=selected_month,
-                log_callback=silent_log_callback,
-                progress_callback=progress_callback
-            )
+            try:
+                worker = QAReportWorker(
+                    creds_input=creds_input,
+                    source_id=source_id,
+                    report_id=report_id,
+                    selected_lang="Tümü",
+                    selected_year=selected_year,
+                    selected_month=selected_month,
+                    user=current_user,
+                    log_callback=silent_log_callback,
+                    progress_callback=progress_callback
+                )
+            except TypeError:
+                worker = QAReportWorker(
+                    creds_input=creds_input,
+                    source_id=source_id,
+                    report_id=report_id,
+                    selected_lang="Tümü",
+                    selected_year=selected_year,
+                    selected_month=selected_month,
+                    log_callback=silent_log_callback,
+                    progress_callback=progress_callback
+                )
             
             # Raporu İşle
             updated_data = worker.process()
@@ -394,7 +399,7 @@ if submit_button:
         # ModBot.log Google Sheets Dosyasına Yaz
         append_log_to_google_sheet(creds_input, "Başarılı ✅", job_details)
         
-        st.success("✅ Rapor başarıyla güncellendi ve Global Perf tablosuna aktarıldı!")
+        st.success(f"✅ Rapor **{current_user}** kullanıcısı adına başarıyla güncellendi ve aktarıldı!")
         
         # Rapor Önizleme Ekranı
         if updated_data is not None and isinstance(updated_data, pd.DataFrame) and not updated_data.empty:
@@ -404,7 +409,7 @@ if submit_button:
     except Exception as e:
         job_details["error"] = str(e)
         
-        # ModBot.log Google Sheets Dosyasına Yaz
+        # ModBot.log Google Sheets Dosyasına Hata Yaz
         append_log_to_google_sheet(creds_input, "Hata ❌", job_details)
         
         st.error(f"❌ İşlem sırasında bir hata oluştu: {str(e)}")
