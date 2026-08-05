@@ -350,7 +350,7 @@ if submit_button:
                 creds_input=creds_input,
                 source_id=source_id,
                 report_id=report_id,
-                selected_lang="Tümü", # Dil filtresi kaldırıldığı için varsayılan "Tümü" olarak gönderilir
+                selected_lang="Tümü",
                 selected_year=selected_year,
                 selected_month=selected_month,
                 log_callback=silent_log_callback,
@@ -393,13 +393,32 @@ if submit_button:
         save_audit_log(log_entry)
         st.error(f"❌ İşlem sırasında bir hata oluştu: {str(e)}")
 
-# --- SİSTEM GEÇMİŞİ VE AUDIT LOG TABLOSU ---
+# --- SİSTEM GEÇMİŞİ VE AUDIT LOG TABLOSU (HATA KORUMALI) ---
 st.subheader("📜 Raporlama ve İşlem Geçmişi (Audit Logs)")
 audit_data = load_audit_logs()
 
 if audit_data:
     df_logs = pd.DataFrame(audit_data)
-    df_logs.columns = ["Tarih / Saat", "Kullanıcı", "Kaynak Tablo", "Rapor Tablosu", "Ay", "Yıl", "Durum"]
+    
+    # Eski ve yeni log kayıtlarındaki sütun uyumsuzluklarına karşı dinamik eşleme
+    column_mapping = {
+        "timestamp": "Tarih / Saat",
+        "user": "Kullanıcı",
+        "source_table": "Kaynak Tablo",
+        "report_table": "Rapor Tablosu",
+        "month": "Ay",
+        "year": "Yıl",
+        "lang": "Dil",
+        "status": "Durum"
+    }
+    
+    # Sadece mevcut sütun isimlerini değiştir, yoksa pas geç
+    df_logs = df_logs.rename(columns=column_mapping)
+    
+    # Eğer eski loglardan kalan 'Dil' sütunu varsa tabloyu temiz tutmak için gizleyelim
+    if "Dil" in df_logs.columns:
+        df_logs = df_logs.drop(columns=["Dil"])
+        
     st.dataframe(df_logs, use_container_width=True, hide_index=True)
 else:
     st.caption("Henüz kayıtlı bir işlem geçmişi bulunmuyor.")
