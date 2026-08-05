@@ -162,7 +162,7 @@ with st.sidebar:
         st.session_state["current_user"] = None
         st.rerun()
 
-st.title("📊 QA Rapor Otomasyonu")
+st.title("Zula Game Moderation")
 
 # --- CREDENTIALS YÜKLEME / OKUMA ---
 creds_input = None
