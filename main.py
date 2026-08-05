@@ -374,11 +374,12 @@ if submit_button:
 
     try:
         with st.spinner("⏳ Veriler Google Sheets üzerinden okunuyor ve işleniyor, lütfen bekleyin..."):
-            # Parametreleri backend'in orijinal beklentisine göre gönderiyoruz
+            # selected_lang="Tümü" parametresi zorunlu olduğu için eklendi
             worker = QAReportWorker(
                 creds_input=creds_input,
                 source_id=source_id,
                 report_id=report_id,
+                selected_lang="Tümü",
                 selected_year=selected_year,
                 selected_month=selected_month,
                 log_callback=silent_log_callback,
@@ -406,23 +407,8 @@ if submit_button:
         append_log_to_google_sheet(creds_input, "Hata ❌", job_details)
         
         st.error(f"❌ İşlem sırasında hata oluştu: {str(e)}")
-        # Neden çalışmadığını tam olarak görmek için teknik hatayı ekrana basıyoruz:
         with st.expander("🔍 Hata Detayını Gör"):
             st.code(error_details, language="python")
-        
-        # ModBot.log Google Sheets Dosyasına Yaz
-        append_log_to_google_sheet(creds_input, "Başarılı ✅", job_details)
-        
-        # Ekran Bildirimi
-        st.success("✅ Rapor başarıyla güncellendi ve aktarıldı!")
-        
-        # Rapor Önizleme Ekranı
-        if updated_data is not None and isinstance(updated_data, pd.DataFrame) and not updated_data.empty:
-            st.subheader("👁️ Güncellenen Veri Önizlemesi")
-            st.dataframe(updated_data, use_container_width=True)
-
-    except Exception as e:
-        job_details["error"] = str(e)
         
         # ModBot.log Google Sheets Dosyasına Hata Yaz
         append_log_to_google_sheet(creds_input, "Hata ❌", job_details)
