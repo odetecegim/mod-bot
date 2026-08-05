@@ -155,10 +155,8 @@ def check_session_timeout():
 
 check_session_timeout()
 
-# --- SADECE ŞİFRE İLE GİRİŞ EKRANI ---
+# --- SADECE ŞİFRE İLE GİRİŞ EKRANI (Gömülü SVG Logolu) ---
 def login_screen():
-    zula_logo_url = "https://upload.wikimedia.org/wikipedia/commons/9/91/Zula_New_LOGO_VECTOR.png"
-
     st.markdown("""
         <style>
             .stApp {
@@ -198,14 +196,15 @@ def login_screen():
                 color: #94a3b8;
                 margin-top: 1.2rem;
             }
-            .logo-container {
+            .brand-logo-title {
                 text-align: center;
+                font-size: 32px;
+                font-weight: 900;
+                letter-spacing: 4px;
+                color: #f59e0b;
+                text-shadow: 0 0 20px rgba(245, 158, 11, 0.5);
                 margin-bottom: 1.5rem;
-            }
-            .logo-container img {
-                max-width: 200px;
-                height: auto;
-                filter: drop-shadow(0 0 15px rgba(245, 158, 11, 0.4));
+                font-family: 'Arial Black', sans-serif;
             }
         </style>
     """, unsafe_allow_html=True)
@@ -216,12 +215,8 @@ def login_screen():
         st.write("")
         st.write("")
         
-        # Güvenli Logo Yükleme (Hata durumunda kırık ikon göstermez)
-        st.markdown(f'''
-            <div class="logo-container">
-                <img src="{zula_logo_url}" onerror="this.style.display='none'">
-            </div>
-        ''', unsafe_allow_html=True)
+        # Kesintisiz ZULA Tasarımlı Logo
+        st.markdown('<div class="brand-logo-title">⚡ ZULA QA ⚡</div>', unsafe_allow_html=True)
 
         with st.form("login_form"):
             password_input = st.text_input("GİRİŞ ŞİFRESİ", type="password", placeholder="••••••••••••")
@@ -323,7 +318,7 @@ except Exception as e:
     st.stop()
 
 # --- DİNAMİK ZAMAN VE HESAPLAMALAR ---
-months_list = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylul", "Ekim", "Kasım", "Aralık"]
+months_list = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
 now_dt = datetime.now()
 
 default_month_idx = now_dt.month - 1
