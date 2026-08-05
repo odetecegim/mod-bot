@@ -77,7 +77,6 @@ with col_src:
     source_id = all_sheets[selected_source_name]
 
 with col_rep:
-    # Hedef varsayılan olarak 2. dosyayı seçer
     default_rep_idx = 1 if len(sorted_sheet_names) > 1 else 0
     selected_report_name = st.selectbox(
         "🎯 Hedef (Ana Konsolide Rapor) Dosyası:",
@@ -104,13 +103,7 @@ with col_year:
     years = [2024, 2025, 2026, 2027]
     selected_year = st.selectbox("📆 Yıl Seçimi:", options=years, index=2)
 
-# Bilgi Kutusu
-st.info(
-    f"📌 **Seçilen İşlem Detayları:**\n\n"
-    f"- **Kaynak Dosya:** `{selected_source_name}` *(ID: {source_id})*\n"
-    f"- **Hedef Rapor:** `{selected_report_name}` *(ID: {report_id})*\n"
-    f"- **Filtre Dönemi:** {selected_month} {selected_year} | **Dil:** {selected_lang}"
-)
+st.markdown("---")
 
 # ==========================================
 # 🚀 ARAYÜZ CANLI LOG VE ÇALIŞTIRMA
