@@ -1,12 +1,16 @@
 import streamlit as st
 import pandas as pd
-import json
-import os
 import time
 from datetime import datetime
-from backend import QAReportWorker, get_available_spreadsheets
+from google.oauth2.service_account import Credentials
+import gspread
 
-# Streamlit Konfigürasyonu
+from backend import (
+    QAReportWorker, 
+    get_available_spreadsheets, 
+    process_za_and_insert_month
+)
+
 st.set_page_config(
     page_title="QA Report Automation",
     page_icon="📊",
@@ -49,22 +53,70 @@ def check_session_timeout():
 check_session_timeout()
 
 # ==========================================
-# 🔑 GİRİŞ EKRANI
+# 🔑 GİRİŞ EKRANI (KÜÇÜLTÜLMÜŞ LOGO)
 # ==========================================
 def login_screen():
     st.markdown("""
         <style>
-            .stApp { background: radial-gradient(circle at center, #2a2d34 0%, #121316 60%, #08080a 100%) !important; }
-            div[data-testid="stForm"] { background: rgba(18, 20, 26, 0.95) !important; border-radius: 16px !important; }
-            .brand-logo-container { text-align: center; margin-bottom: 1rem; }
-            .brand-logo-img { max-width: 70px; height: auto; }
+            .stApp {
+                background: radial-gradient(circle at center, #2a2d34 0%, #121316 60%, #08080a 100%) !important;
+            }
+            div[data-testid="stForm"] {
+                background: rgba(18, 20, 26, 0.95) !important;
+                border: 1px solid rgba(255, 255, 255, 0.15) !important;
+                border-radius: 16px !important;
+                padding: 2rem 1.5rem !important;
+                box-shadow: 0 20px 40px rgba(0,0,0,0.8) !important;
+            }
+            label {
+                color: #f1f5f9 !important;
+                font-size: 13px !important;
+                font-weight: 600 !important;
+            }
+            div[data-baseweb="input"] {
+                background-color: rgba(10, 11, 15, 0.9) !important;
+                border: 1px solid rgba(255, 255, 255, 0.2) !important;
+                border-radius: 10px !important;
+                color: #ffffff !important;
+            }
+            div[data-testid="stFormSubmitButton"] > button {
+                background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%) !important;
+                color: #ffffff !important;
+                border: none !important;
+                border-radius: 10px !important;
+                height: 45px !important;
+                font-weight: 700 !important;
+                font-size: 14px !important;
+                margin-top: 10px !important;
+            }
+            .footer-text {
+                text-align: center;
+                font-size: 12px;
+                color: #94a3b8;
+                margin-top: 1.2rem;
+            }
+            .brand-logo-container {
+                text-align: center;
+                margin-bottom: 1rem;
+            }
+            .brand-logo-img {
+                max-width: 70px;
+                height: auto;
+                filter: drop-shadow(0px 0px 8px rgba(245, 158, 11, 0.4));
+            }
         </style>
     """, unsafe_allow_html=True)
 
     _, center_col, _ = st.columns([1, 1.2, 1])
+
     with center_col:
         st.write("")
-        st.markdown('<div class="brand-logo-container"><img src="https://resmim.net/cdn/2026/08/05/EYU08h.webp" class="brand-logo-img"></div>', unsafe_allow_html=True)
+        st.write("")
+        st.markdown('''
+            <div class="brand-logo-container">
+                <img src="https://resmim.net/cdn/2026/08/05/EYU08h.webp" class="brand-logo-img" alt="Zula Logo">
+            </div>
+        ''', unsafe_allow_html=True)
 
         with st.form("login_form"):
             password_input = st.text_input("GİRİŞ ŞİFRESİ", type="password", placeholder="••••••••••••")
@@ -73,7 +125,12 @@ def login_screen():
             if submit:
                 raw_users = st.secrets.get("USERS", {})
                 typed_pass = password_input.strip()
-                found_user = next((u for u, p in raw_users.items() if str(p).strip() == typed_pass), None)
+
+                found_user = None
+                for user_name, user_pass in raw_users.items():
+                    if str(user_pass).strip() == typed_pass:
+                        found_user = str(user_name).strip()
+                        break
 
                 if found_user:
                     st.session_state["authenticated"] = True
@@ -82,14 +139,16 @@ def login_screen():
                     st.session_state["login_date"] = datetime.now().date()
                     st.rerun()
                 else:
-                    st.error("❌ Hatalı Şifre!")
+                    st.error("❌ Hatalı veya Geçersiz Şifre!")
+
+        st.markdown('<div class="footer-text">🔒 Oturum süresi: <strong>1 Saat / Gece 00:00 Çıkışlı</strong></div>', unsafe_allow_html=True)
 
 if not st.session_state.get("authenticated", False):
     login_screen()
     st.stop()
 
 # ==========================================
-# 📌 SOL MENÜ VE NAVİGASYON
+# 📌 SOL MENÜ & NAVİGASYON
 # ==========================================
 with st.sidebar:
     st.write(f"👤 **Kullanıcı:** {st.session_state.get('current_user', 'Bilinmeyen')}")
@@ -99,7 +158,6 @@ with st.sidebar:
         st.session_state["authenticated"] = False
         st.rerun()
 
-# Creds okuma
 creds_input = None
 if hasattr(st, "secrets") and len(st.secrets) > 0:
     for k in st.secrets:
@@ -156,41 +214,124 @@ if page == "🚀 Rapor Çalıştır":
         updated_df = worker.process()
         if updated_df is not None and not updated_df.empty:
             st.session_state["last_processed_df"] = updated_df
+            st.session_state["active_report_id"] = report_id
+            st.session_state["selected_month"] = selected_month
             st.success("🎉 Veriler başarıyla işlendi! 'Yüklenecek Kişiler' sekmesinden performans tablosuna göz atabilirsiniz.")
         else:
             st.error("❌ Veri bulunamadı veya aktarım başarısız.")
 
 # ==========================================
-# PAGE 2: PERFORMANS & YÜKLENECEK KİŞİLER
+# PAGE 2: PERFORMANS & YÜKLEYİCİ LİSTESİ
 # ==========================================
 elif page == "📈 Yüklenecek Kişiler & Miktarlar":
     st.title("📈 Yüklenecek Kişiler ve Puan/Miktar Tablosu")
     
     df = st.session_state.get("last_processed_df", None)
     if df is not None and not df.empty:
-        # Sadece sayı verisi veya işlemi olan kişileri süz
-        st.subheader("📋 Yükleme Yapılacak Personel Listesi")
+        st.subheader("📋 Genel Performans Tablosu")
         
-        # Filtreleme
         search_query = st.text_input("🔍 Personel / Nick Arama:", "")
         if search_query:
-            df = df[df.apply(lambda row: row.astype(str).str.contains(search_query, case=False).any(), axis=1)]
+            df_filtered = df[df.apply(lambda row: row.astype(str).str.contains(search_query, case=False).any(), axis=1)]
+        else:
+            df_filtered = df
 
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(df_filtered, use_container_width=True)
 
-        # İndirme Seçeneği (Excel / CSV)
-        csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="📥 Performans Listesini CSV Olarak İndir",
-            data=csv,
-            file_name=f"qa_yuklenecek_kisi_ve_miktarlar_{datetime.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv"
-        )
+        st.markdown("---")
+        
+        # ⚡ İŞLE BUTONU
+        st.subheader("⚡ ZA Miktarlarını Ay Tablosuna Aktar & Son Miktarı Hesapla")
+        
+        col_month_sel, col_btn = st.columns([2, 1])
+        with col_month_sel:
+            target_month_to_process = st.selectbox(
+                "İşlenecek Hedef Ayı Seçin:", 
+                ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylul", "Ekim", "Kasım", "Aralık"],
+                index=6
+            )
+
+        with col_btn:
+            st.write("")
+            st.write("")
+            process_btn = st.button("⚡ ZA Miktarlarını İşle", type="primary", use_container_width=True)
+
+        if process_btn:
+            with st.spinner("ZA verileri işleniyor ve toplam miktar hesaplanıyor..."):
+                sheets_data = get_available_spreadsheets(creds_input)
+                filtered_report_sheets = {name: sid for name, sid in sheets_data.get("all", {}).items() if "global perf" in name.lower()}
+                
+                if filtered_report_sheets:
+                    if isinstance(creds_input, dict):
+                        client = gspread.service_account_from_dict(creds_input)
+                    else:
+                        client = gspread.service_account(filename=creds_input)
+
+                    rep_id = st.session_state.get("active_report_id", list(filtered_report_sheets.values())[0])
+                    wb = client.open_by_key(rep_id)
+                    ws = wb.active
+                    
+                    log_msgs = []
+                    success = process_za_and_insert_month(ws, target_month_to_process, log_func=lambda m: log_msgs.append(m))
+                    
+                    for m in log_msgs:
+                        st.write(m)
+                        
+                    if success:
+                        st.balloons()
+                        st.success(f"🎉 ZA verileri [{target_month_to_process}] sütununa işlendi ve Yükleyici Son Miktarları toplandı!")
+
+        st.markdown("---")
+        
+        # 🎁 YÜKLEYİCİ İÇİN DİREKT KULLANIM ALANI
+        st.subheader("🚀 Yükleyici İçin Temiz Liste (Direkt Buradan Alacak)")
+        st.info("💡 Yüklemeyi yapacak personel sadece bu tabloyu kullanacak. (Puanı 0 olan kişiler otomatik elenmiştir)")
+        
+        # Kullanıcı Adı ve ZA sütunlarını filtreleme
+        cols = df.columns.tolist()
+        user_col = cols[1] if len(cols) > 1 else cols[0]
+        
+        # ZA veya Son Miktar sütunu bulma
+        za_col = None
+        for c in cols:
+            if any(k in c.upper() for k in ["ZA", "TOPLAM", "YÜKLENECEK", "MİKTAR"]):
+                za_col = c
+                break
+        
+        if not za_col:
+            za_col = cols[-1]
+
+        df_loader = df[[user_col, za_col]].copy()
+        df_loader.columns = ["Kullanıcı / Personel", "Yüklenecek Son ZA Miktarı"]
+        
+        # 0 veya Boş olanları ele
+        df_loader = df_loader[df_loader["Yüklenecek Son ZA Miktarı"].astype(str).str.strip().str.isdigit()]
+        df_loader = df_loader[df_loader["Yüklenecek Son ZA Miktarı"].astype(int) > 0]
+
+        st.dataframe(df_loader, use_container_width=True)
+
+        col_dl1, col_dl2 = st.columns(2)
+        with col_dl1:
+            csv_loader = df_loader.to_csv(index=False, sep="\t").encode('utf-8')
+            st.download_button(
+                label="📋 Yükleyici Listesini (Excel / Tab Kopyalanabilir) İndir",
+                data=csv_loader,
+                file_name=f"yukleyici_direkt_liste_{datetime.now().strftime('%Y%m%d')}.txt",
+                mime="text/plain"
+            )
+        with col_dl2:
+            csv_full = df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Tüm Performans Tablosunu CSV Olarak İndir",
+                data=csv_full,
+                file_name=f"qa_tam_tablo_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv"
+            )
     else:
         st.info("ℹ️ Henüz işlenmiş bir veri yok. Lütfen önce 'Rapor Çalıştır' sayfasından işlemi başlatın.")
 
 # ==========================================
-# PAGE 3: AYLIK RAPORLAR & GEÇMİŞ
+# PAGE 3: AYLIK RAPORLAR
 # ==========================================
 elif page == "📅 Aylık Raporlar":
     st.title("📅 Aylık Konsolide Rapor Görünümü")
@@ -204,8 +345,6 @@ elif page == "📅 Aylık Raporlar":
         rep_id = filtered_report_sheets[selected_rep]
         
         try:
-            # Doğrudan gspread ile istemci oluşturma (Credentials çakışması engellendi)
-            import gspread
             if isinstance(creds_input, dict):
                 client = gspread.service_account_from_dict(creds_input)
             else:
