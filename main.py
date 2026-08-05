@@ -51,7 +51,6 @@ def append_log_to_modbot_sheet(action_type, details, user_name=None):
     user_name verilmezse direkt st.session_state['current_user'] değerini otomatik alır.
     """
     try:
-        # Oturumu kim açtıysa onun adını al
         active_user = user_name or st.session_state.get("current_user") or "Bilinmeyen Kullanıcı"
 
         report_id = st.session_state.get("active_report_id")
@@ -71,7 +70,6 @@ def append_log_to_modbot_sheet(action_type, details, user_name=None):
 
         wb = client.open_by_key(report_id)
 
-        # ModBot.log sekmesini bul veya oluştur
         try:
             log_ws = wb.worksheet("ModBot.log")
         except gspread.WorksheetNotFound:
@@ -187,7 +185,6 @@ def login_screen():
                     st.session_state["current_user"] = found_user
                     st.session_state["login_time"] = time.time()
                     st.session_state["login_date"] = datetime.now().date()
-                    # Giriş yapan kullanıcının adıyla log at
                     append_log_to_modbot_sheet("GİRİŞ", "Sisteme giriş yaptı.", user_name=found_user)
                     st.rerun()
                 else:
@@ -314,12 +311,36 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
         else:
             df_filtered = df.copy()
 
+        # ------------------------------------------------------------------
+        # 🧮 FORMÜL VE DİNAMİK HESAPLAMA MANTIĞI (DİĞER/KANAAT DAHİL)
+        # ------------------------------------------------------------------
+        score_cols = [
+            "Zula Pass", "0 Kul. TESTİ", "Genel Check", "Hata bildirimi", 
+            "Öneri Bildirimi", "Discord PC", "Hakemlik", "Diğer/Kanaat"
+        ]
+        
+        # DataFrame içinde var olan ilgili performans sütunlarını tespit et
+        valid_score_cols = [c for c in df_filtered.columns if any(sc.lower() in str(c).lower() for sc in score_cols)]
+
+        # Sayısal veri dönüşümü yap
+        for col in valid_score_cols:
+            df_filtered[col] = pd.to_numeric(df_filtered[col], errors='coerce').fillna(0)
+
+        # Toplam Sütununu Hesapla (Diğer/Kanaat dahil)
+        if valid_score_cols:
+            df_filtered["Toplam"] = df_filtered[valid_score_cols].sum(axis=1)
+
+        # ZA Sütununu Hesapla (Toplam * 500)
+        df_filtered["ZA"] = df_filtered["Toplam"] * 500
+        # ------------------------------------------------------------------
+
         edited_genel_df = st.data_editor(
             df_filtered,
             num_rows="dynamic",
             use_container_width=True,
             key="genel_performans_editor",
-            on_change=track_genel_editor_changes
+            on_change=track_genel_editor_changes,
+            disabled=["Toplam", "ZA"]
         )
         
         st.session_state["last_processed_df"] = edited_genel_df
@@ -374,22 +395,8 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
         st.subheader("🚀 Yükleyici İçin Temiz Liste (Düzenlenebilir)")
         
         cols = edited_genel_df.columns.tolist()
-        user_col = cols[1] if len(cols) > 1 else cols[0]
-        
-        za_col = None
-        for c in cols:
-            c_clean = str(c).strip().upper()
-            if c_clean == "ZA" or "ZA MİKTAR" in c_clean or "YÜKLENECEK ZA" in c_clean:
-                za_col = c
-                break
-        
-        if not za_col:
-            for c in cols:
-                if "ZA" in str(c).upper():
-                    za_col = c
-                    break
-        if not za_col:
-            za_col = cols[-1]
+        user_col = "Nick" if "Nick" in cols else (cols[1] if len(cols) > 1 else cols[0])
+        za_col = "ZA" if "ZA" in cols else cols[-1]
 
         df_loader_base = edited_genel_df[[user_col, za_col]].copy()
         df_loader_base.columns = ["Kullanıcı / Personel", "Yüklenecek Son ZA Miktarı"]
