@@ -55,6 +55,7 @@ check_session_timeout()
 # ==========================================
 # ==========================================
 # ==========================================
+# ==========================================
 # 🔑 SADECE ŞİFRE İLE GİRİŞ EKRANI
 # ==========================================
 
@@ -100,22 +101,12 @@ def login_screen():
             }
             .brand-logo-container {
                 text-align: center;
-                margin-bottom: 1.2rem;
+                margin-bottom: 1.5rem;
             }
             .brand-logo-img {
-                max-width: 240px;
+                max-width: 140px;
                 height: auto;
-                filter: drop-shadow(0px 0px 15px rgba(245, 158, 11, 0.4));
-            }
-            .brand-logo-title {
-                text-align: center;
-                font-size: 26px;
-                font-weight: 900;
-                letter-spacing: 3px;
-                color: #f59e0b;
-                text-shadow: 0 0 20px rgba(245, 158, 11, 0.5);
-                margin-bottom: 1.2rem;
-                font-family: 'Arial Black', sans-serif;
+                filter: drop-shadow(0px 0px 10px rgba(245, 158, 11, 0.4));
             }
         </style>
     """, unsafe_allow_html=True)
@@ -126,12 +117,11 @@ def login_screen():
         st.write("")
         st.write("")
         
-        # --- DOĞRUDAN WEBP LOGO VE BAŞLIK BÖLÜMÜ ---
+        # --- SADECE LOGO (YAZISIZ & KÜÇÜLTÜLMÜŞ) ---
         st.markdown('''
             <div class="brand-logo-container">
-                <img src="https://resmim.net/cdn/2026/08/05/EYU08h.webp" class="brand-logo-img" alt="Zula QA Logo">
+                <img src="https://resmim.net/cdn/2026/08/05/EYU08h.webp" class="brand-logo-img" alt="Zula Logo">
             </div>
-            <div class="brand-logo-title">⚡ ZULA QA ⚡</div>
         ''', unsafe_allow_html=True)
 
         with st.form("login_form"):
