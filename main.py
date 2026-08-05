@@ -358,13 +358,10 @@ if submit_button:
     def progress_callback(val):
         progress_bar.progress(val)
 
-    # Ay ismini her iki ihtimale karşı hazırla
-    formatted_month = selected_month.strip()
-
     job_details = {
         "source": source_name,
         "report": report_name,
-        "month": formatted_month,
+        "month": selected_month,
         "year": selected_year,
         "user": current_user
     }
@@ -377,13 +374,48 @@ if submit_button:
                 report_id=report_id,
                 selected_lang="Tümü",
                 selected_year=selected_year,
-                selected_month=formatted_month,
+                selected_month=selected_month,
                 log_callback=silent_log_callback,
                 progress_callback=progress_callback
             )
             
             # Raporu İşle
             updated_data = worker.process()
+        
+        # ModBot.log Google Sheet Dosyasına Başarılı Kaydı
+        append_log_to_google_sheet(creds_input, "Başarılı ✅", job_details)
+        
+        if updated_data is not None and isinstance(updated_data, pd.DataFrame) and not updated_data.empty:
+            st.success("✅ Rapor başarıyla işlendi ve ana tabloya aktarıldı!")
+            st.subheader("👁️ Güncellenen Veri Önizlemesi")
+            st.dataframe(updated_data, use_container_width=True)
+        else:
+            st.warning(f"⚠️ **{selected_month} {selected_year}** dönemi için filtrelenen veri boş döndü.")
+            
+            # --- TEŞHİS / DEBUG KISMI ---
+            with st.expander("🔍 Tablo Yapısı Teşhisi (Neden Bulunamadı?)", expanded=True):
+                try:
+                    # Kaynak veriyi ham haliyle okuyup kontrol edelim
+                    raw_df = worker.load_source_data() if hasattr(worker, 'load_source_data') else None
+                    if raw_df is not None and not raw_df.empty:
+                        st.write("**Kaynak Tablodaki Sütunlar:**", list(raw_df.columns))
+                        st.write("**Kaynak Tablonun İlk 5 Satırı (Ham Veri):**")
+                        st.dataframe(raw_df.head(5), use_container_width=True)
+                    else:
+                        st.error("Kaynak Tablo ham verisi bile okunamadı veya tablo tamamen boş.")
+                except Exception as diag_err:
+                    st.info(f"Ham veri teşhis hatası: {diag_err}")
+
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        job_details["error"] = str(e)
+        
+        append_log_to_google_sheet(creds_input, "Hata ❌", job_details)
+        st.error(f"❌ İşlem sırasında bir hata oluştu: {str(e)}")
+        
+        with st.expander("🔍 Teknik Hata Detayını Gör"):
+            st.code(error_details, language="python")
         
         # ModBot.log Google Sheet Dosyasına Başarılı Kaydı
         append_log_to_google_sheet(creds_input, "Başarılı ✅", job_details)
