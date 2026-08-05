@@ -204,10 +204,14 @@ elif page == "📅 Aylık Raporlar":
         rep_id = filtered_report_sheets[selected_rep]
         
         try:
-            creds = Credentials.from_service_account_info(creds_input, scopes=["https://www.googleapis.com/auth/spreadsheets"])
-            client = gspread.authorize(creds)
+            # Doğrudan gspread ile istemci oluşturma (Credentials çakışması engellendi)
+            import gspread
+            if isinstance(creds_input, dict):
+                client = gspread.service_account_from_dict(creds_input)
+            else:
+                client = gspread.service_account(filename=creds_input)
+
             wb = client.open_by_key(rep_id)
-            
             sheet_names = [ws.title for ws in wb.worksheets()]
             selected_ws_name = st.selectbox("📆 İncelemek İstediğiniz Ay Sekmesini Seçin:", sheet_names)
             
@@ -216,7 +220,6 @@ elif page == "📅 Aylık Raporlar":
                 monthly_data = ws.get_all_values()
                 
                 if monthly_data and len(monthly_data) > 0:
-                    # HATA DÜZELTME: Tekrarlayan ve boş sütun isimlerini otomatik düzeltme
                     raw_headers = monthly_data[0]
                     cleaned_headers = []
                     seen_headers = {}
@@ -233,7 +236,6 @@ elif page == "📅 Aylık Raporlar":
                             seen_headers[h_str] = 0
                         cleaned_headers.append(h_str)
 
-                    # DataFrame Oluşturma
                     if len(monthly_data) > 1:
                         m_df = pd.DataFrame(monthly_data[1:], columns=cleaned_headers)
                     else:
