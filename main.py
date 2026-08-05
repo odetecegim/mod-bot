@@ -70,13 +70,11 @@ def append_log_to_google_sheet(creds, status, details):
         else:
             gc = gspread.service_account_from_dict(creds)
 
-        # "ModBot.log" dosyasını açmaya çalışır, yoksa otomatik oluşturur
         try:
             sh = gc.open(LOG_SHEET_NAME)
         except gspread.exceptions.SpreadsheetNotFound:
             sh = gc.create(LOG_SHEET_NAME)
             ws = sh.sheet1
-            # Başlık satırını ekle
             ws.append_row([
                 "Tarih / Saat", 
                 "İşlemi Yapan Kullanıcı", 
@@ -90,7 +88,6 @@ def append_log_to_google_sheet(creds, status, details):
 
         ws = sh.sheet1
 
-        # Eğer sayfa boşsa başlıkları ekle
         if len(ws.get_all_values()) == 0:
             ws.append_row([
                 "Tarih / Saat", 
@@ -104,7 +101,7 @@ def append_log_to_google_sheet(creds, status, details):
             ])
 
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        user = details.get("user") or st.session_state.get("current_user", "Bilinmeyen Kullanıcı")
+        user = details.get("user") or st.session_state.get("current_user") or "Bilinmeyen Kullanıcı"
         error_msg = str(details.get("error", ""))
 
         row = [
@@ -118,7 +115,6 @@ def append_log_to_google_sheet(creds, status, details):
             error_msg
         ]
         
-        # Sütun bazlı tam satır olarak ekle
         ws.append_row(row, value_input_option="USER_ENTERED")
     except Exception as e:
         print(f"Google Sheet Log Yazma Hatası: {e}")
@@ -159,7 +155,7 @@ def check_session_timeout():
 
 check_session_timeout()
 
-# --- GİRİŞ EKRANI ---
+# --- SADECE ŞİFRE İLE GİRİŞ EKRANI ---
 def login_screen():
     zula_logo_url = "https://upload.wikimedia.org/wikipedia/commons/9/91/Zula_New_LOGO_VECTOR.png"
 
@@ -247,21 +243,28 @@ def login_screen():
     """, unsafe_allow_html=True)
 
     with st.form("login_form"):
-        username_input = st.text_input("KULLANICI ADI", placeholder="Örn: ahmet")
-        password_input = st.text_input("ŞİFRE", type="password", placeholder="••••••••••••")
+        password_input = st.text_input("GİRİŞ ŞİFRESİ", type="password", placeholder="••••••••••••")
         submit = st.form_submit_button("Sisteme Giriş Yap →", use_container_width=True)
 
         if submit:
-            users_db = st.secrets.get("USERS", {})
-            uname = username_input.strip().lower()
-            if uname in users_db and str(users_db[uname]) == password_input:
+            raw_users = st.secrets.get("USERS", {})
+            typed_pass = password_input.strip()
+
+            # Şifreden Kullanıcı Adını Otomatik Bul
+            found_user = None
+            for user_name, user_pass in raw_users.items():
+                if str(user_pass).strip() == typed_pass:
+                    found_user = str(user_name).strip()
+                    break
+
+            if found_user:
                 st.session_state["authenticated"] = True
-                st.session_state["current_user"] = username_input.strip()
+                st.session_state["current_user"] = found_user  # Şifrenin sahibi (örn: Sinan, Merve vs.)
                 st.session_state["login_time"] = time.time()
                 st.session_state["login_date"] = datetime.now().date()
                 st.rerun()
             else:
-                st.error("❌ Hatalı Kullanıcı Adı veya Şifre!")
+                st.error("❌ Hatalı veya Geçersiz Şifre!")
 
     st.markdown('<div class="footer-text">🔒 Oturum süresi: <strong>1 Saat / Gece 00:00 Çıkışlı</strong></div>', unsafe_allow_html=True)
 
@@ -421,10 +424,11 @@ if submit_button:
             # Raporu İşle
             updated_data = worker.process()
         
-        # ModBot.log Google Sheets Dosyasına Yaz
+        # ModBot.log Google Sheets Dosyasına Yaz (Doğru Kullanıcı İsmiyle)
         append_log_to_google_sheet(creds_input, "Başarılı ✅", job_details)
         
-        st.success(f"✅ Rapor **{current_user}** kullanıcısı adına başarıyla güncellendi ve aktarıldı!")
+        # Ekran Bildirimi (Kullanıcı ismi barındırmaz)
+        st.success("✅ Rapor başarıyla güncellendi ve aktarıldı!")
         
         # Rapor Önizleme Ekranı
         if updated_data is not None and isinstance(updated_data, pd.DataFrame) and not updated_data.empty:
