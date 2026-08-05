@@ -8,7 +8,7 @@ from backend import QAReportWorker, get_available_spreadsheets
 
 # Streamlit Konfigürasyonu (En Üstte Olmalıdır)
 st.set_page_config(
-    page_title="QA Report Automation",
+    page_title="Game Moderation",
     page_icon="📊",
     layout="wide"
 )
@@ -53,6 +53,7 @@ def check_session_timeout():
 check_session_timeout()
 
 # ==========================================
+# ==========================================
 # 🔑 SADECE ŞİFRE İLE GİRİŞ EKRANI
 # ==========================================
 
@@ -96,14 +97,23 @@ def login_screen():
                 color: #94a3b8;
                 margin-top: 1.2rem;
             }
+            .brand-logo-container {
+                text-align: center;
+                margin-bottom: 1.2rem;
+            }
+            .brand-logo-img {
+                max-width: 220px;
+                height: auto;
+                filter: drop-shadow(0px 0px 12px rgba(245, 158, 11, 0.4));
+            }
             .brand-logo-title {
                 text-align: center;
-                font-size: 32px;
+                font-size: 26px;
                 font-weight: 900;
-                letter-spacing: 4px;
+                letter-spacing: 3px;
                 color: #f59e0b;
                 text-shadow: 0 0 20px rgba(245, 158, 11, 0.5);
-                margin-bottom: 1.5rem;
+                margin-bottom: 1.2rem;
                 font-family: 'Arial Black', sans-serif;
             }
         </style>
@@ -114,7 +124,14 @@ def login_screen():
     with center_col:
         st.write("")
         st.write("")
-        st.markdown('<div class="brand-logo-title">⚡ ZULA QA ⚡</div>', unsafe_allow_html=True)
+        
+        # --- EKLENEN LOGO VE BAŞLIK BÖLÜMÜ ---
+        st.markdown('''
+            <div class="brand-logo-container">
+                <img src="https://resmim.net/i/EYU08h" class="brand-logo-img" alt="Zula QA Logo">
+            </div>
+            <div class="brand-logo-title">⚡ ZULA QA ⚡</div>
+        ''', unsafe_allow_html=True)
 
         with st.form("login_form"):
             password_input = st.text_input("GİRİŞ ŞİFRESİ", type="password", placeholder="••••••••••••")
@@ -140,7 +157,7 @@ def login_screen():
                     st.error("❌ Hatalı veya Geçersiz Şifre!")
 
         st.markdown('<div class="footer-text">🔒 Oturum süresi: <strong>1 Saat / Gece 00:00 Çıkışlı</strong></div>', unsafe_allow_html=True)
-
+        
 if not st.session_state.get("authenticated", False):
     login_screen()
     st.stop()
