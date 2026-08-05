@@ -1,8 +1,6 @@
 import streamlit as st
 import pandas as pd
 import time
-import os
-import logging
 from datetime import datetime
 from google.oauth2.service_account import Credentials
 import gspread
@@ -19,27 +17,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# ==========================================
-# 📜 LOG DOSYASI ALTYAPISI VE AYARLARI
-# ==========================================
-LOG_DIR = "logs"
-if not os.path.exists(LOG_DIR):
-    os.makedirs(LOG_DIR)
-
-log_filename = os.path.join(LOG_DIR, "loader_changes.log")
-logging.basicConfig(
-    filename=log_filename,
-    level=logging.INFO,
-    format="%(asctime)s - [%(levelname)s] - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-    encoding="utf-8"
-)
-
-def log_change_to_file(action_type, user_name, details):
-    """Yapılan düzenleme ve değişiklikleri log dosyasına kaydeder."""
-    log_msg = f"Kullanıcı: '{user_name}' | Eylem: {action_type} | Detay: {details}"
-    logging.info(log_msg)
-
 ONE_HOUR_SECONDS = 3600
 
 # ==========================================
@@ -55,6 +32,56 @@ if "login_date" not in st.session_state:
     st.session_state["login_date"] = None
 if "last_processed_df" not in st.session_state:
     st.session_state["last_processed_df"] = None
+if "active_report_id" not in st.session_state:
+    st.session_state["active_report_id"] = None
+
+creds_input = None
+if hasattr(st, "secrets") and len(st.secrets) > 0:
+    for k in st.secrets:
+        if k.lower() in ["gcp_service_account", "credentials", "service_account"]:
+            creds_input = dict(st.secrets[k])
+            break
+
+# ==========================================
+# 📜 GOOGLE SHEETS 'ModBot.log' SEKMESİNE OTURUM SAHİBİ ADIYLA LOG YAZMA
+# ==========================================
+def append_log_to_modbot_sheet(action_type, details, user_name=None):
+    """
+    Log verilerini aktif oturumu açan kullanıcının adıyla 'ModBot.log' sekmesine yazar.
+    user_name verilmezse direkt st.session_state['current_user'] değerini otomatik alır.
+    """
+    try:
+        # Oturumu kim açtıysa onun adını al
+        active_user = user_name or st.session_state.get("current_user") or "Bilinmeyen Kullanıcı"
+
+        report_id = st.session_state.get("active_report_id")
+        if not report_id:
+            sheets_data = get_available_spreadsheets(creds_input)
+            filtered_report_sheets = {name: sid for name, sid in sheets_data.get("all", {}).items() if "global perf" in name.lower()}
+            if filtered_report_sheets:
+                report_id = list(filtered_report_sheets.values())[0]
+
+        if not report_id:
+            return
+
+        if isinstance(creds_input, dict):
+            client = gspread.service_account_from_dict(creds_input)
+        else:
+            client = gspread.service_account(filename=creds_input)
+
+        wb = client.open_by_key(report_id)
+
+        # ModBot.log sekmesini bul veya oluştur
+        try:
+            log_ws = wb.worksheet("ModBot.log")
+        except gspread.WorksheetNotFound:
+            log_ws = wb.add_worksheet(title="ModBot.log", rows="1000", cols="4")
+            log_ws.append_row(["Tarih / Saat", "Oturum Açan Kullanıcı", "İşlem Türü", "Detaylar"])
+
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        log_ws.append_row([now_str, str(active_user), str(action_type), str(details)])
+    except Exception as e:
+        print(f"ModBot.log yazma hatası: {e}")
 
 def check_session_timeout():
     if st.session_state["authenticated"] and st.session_state["login_time"] is not None:
@@ -160,7 +187,8 @@ def login_screen():
                     st.session_state["current_user"] = found_user
                     st.session_state["login_time"] = time.time()
                     st.session_state["login_date"] = datetime.now().date()
-                    log_change_to_file("GİRİŞ", found_user, "Sisteme başarıyla giriş yapıldı.")
+                    # Giriş yapan kullanıcının adıyla log at
+                    append_log_to_modbot_sheet("GİRİŞ", "Sisteme giriş yaptı.", user_name=found_user)
                     st.rerun()
                 else:
                     st.error("❌ Hatalı veya Geçersiz Şifre!")
@@ -172,57 +200,46 @@ if not st.session_state.get("authenticated", False):
     st.stop()
 
 # ==========================================
-# 📌 DÜZENLEME DETAYLARINI CATCH EDEN CALLBACK FONKSİYONLARI
+# 📌 CANLI TABLO DÜZENLEME TAKİP FONKSİYONLARI
 # ==========================================
 def track_genel_editor_changes():
     state = st.session_state.get("genel_performans_editor")
-    user = st.session_state.get("current_user", "Bilinmeyen")
     if state:
-        # 1. Hücre güncellemeleri
         if state.get("edited_rows"):
             for row_idx, changes in state["edited_rows"].items():
-                log_change_to_file("GENEL TABLO - HÜCRE GÜNCELLEME", user, f"Satır İndeksi: {row_idx} -> Değişen Kolonlar & Değerler: {changes}")
-        # 2. Yeni satır ekleme
+                append_log_to_modbot_sheet("GENEL TABLO - HÜCRE GÜNCELLEME", f"Satır {row_idx}: {changes}")
         if state.get("added_rows"):
             for row_data in state["added_rows"]:
-                log_change_to_file("GENEL TABLO - YENİ SATIR EKLEME", user, f"Eklenen Veri: {row_data}")
-        # 3. Satır silme
+                append_log_to_modbot_sheet("GENEL TABLO - YENİ SATIR EKLEME", f"Eklenen: {row_data}")
         if state.get("deleted_rows"):
             for row_idx in state["deleted_rows"]:
-                log_change_to_file("GENEL TABLO - SATIR SİLME", user, f"Silinen Satır İndeksi: {row_idx}")
+                append_log_to_modbot_sheet("GENEL TABLO - SATIR SİLME", f"Silinen Satır: {row_idx}")
 
 def track_loader_editor_changes():
     state = st.session_state.get("za_loader_editor")
-    user = st.session_state.get("current_user", "Bilinmeyen")
     if state:
         if state.get("edited_rows"):
             for row_idx, changes in state["edited_rows"].items():
-                log_change_to_file("YÜKLEYİCİ LİSTESİ - HÜCRE GÜNCELLEME", user, f"Satır İndeksi: {row_idx} -> Değişenler: {changes}")
+                append_log_to_modbot_sheet("YÜKLEYİCİ LİSTESİ - HÜCRE GÜNCELLEME", f"Satır {row_idx}: {changes}")
         if state.get("added_rows"):
             for row_data in state["added_rows"]:
-                log_change_to_file("YÜKLEYİCİ LİSTESİ - YENİ KİŞİ/ZA EKLEME", user, f"Eklenen Veri: {row_data}")
+                append_log_to_modbot_sheet("YÜKLEYİCİ LİSTESİ - YENİ EKLEME", f"Eklenen: {row_data}")
         if state.get("deleted_rows"):
             for row_idx in state["deleted_rows"]:
-                log_change_to_file("YÜKLEYİCİ LİSTESİ - SATIR SİLME", user, f"Silinen Satır İndeksi: {row_idx}")
+                append_log_to_modbot_sheet("YÜKLEYİCİ LİSTESİ - SATIR SİLME", f"Silinen Satır: {row_idx}")
 
 # ==========================================
 # 📌 SOL MENÜ & NAVİGASYON
 # ==========================================
 with st.sidebar:
-    st.write(f"👤 **Kullanıcı:** {st.session_state.get('current_user', 'Bilinmeyen')}")
-    page = st.radio("📌 Navigasyon", ["🚀 Rapor Çalıştır", "📈 Yüklenecek Kişiler & Miktarlar", "📅 Aylık Raporlar", "📜 Değişiklik Logları"], index=0)
+    st.write(f"👤 **Oturum Açan:** `{st.session_state.get('current_user', 'Bilinmeyen')}`")
+    page = st.radio("📌 Navigasyon", ["🚀 Rapor Çalıştır", "📈 Yüklenecek Kişiler & Miktarlar", "📅 Aylık Raporlar"], index=0)
     
     if st.button("🚪 Çıkış Yap"):
-        log_change_to_file("ÇIKIŞ", st.session_state.get('current_user', 'Bilinmeyen'), "Çıkış yapıldı.")
+        append_log_to_modbot_sheet("ÇIKIŞ", "Sistemden çıkış yapıldı.")
         st.session_state["authenticated"] = False
+        st.session_state["current_user"] = None
         st.rerun()
-
-creds_input = None
-if hasattr(st, "secrets") and len(st.secrets) > 0:
-    for k in st.secrets:
-        if k.lower() in ["gcp_service_account", "credentials", "service_account"]:
-            creds_input = dict(st.secrets[k])
-            break
 
 # ==========================================
 # PAGE 1: RAPOR ÇALIŞTIR
@@ -261,7 +278,9 @@ if page == "🚀 Rapor Çalıştır":
     progress_bar = st.progress(0)
 
     if st.button("🚀 Raporu Çalıştır", type="primary", use_container_width=True):
-        log_change_to_file("RAPOR ÇALIŞTIRILDI", st.session_state.get('current_user'), f"Kaynak: {selected_source_name}, Hedef: {selected_report_name}, Dönem: {selected_month} {selected_year}")
+        st.session_state["active_report_id"] = report_id
+        append_log_to_modbot_sheet("RAPOR ÇALIŞTIRILDI", f"Kaynak: {selected_source_name}, Hedef: {selected_report_name}, Dönem: {selected_month} {selected_year}")
+        
         worker = QAReportWorker(
             creds_input=creds_input,
             source_id=source_id,
@@ -274,22 +293,20 @@ if page == "🚀 Rapor Çalıştır":
         updated_df = worker.process()
         if updated_df is not None and not updated_df.empty:
             st.session_state["last_processed_df"] = updated_df
-            st.session_state["active_report_id"] = report_id
             st.session_state["selected_month"] = selected_month
             st.success("🎉 Veriler başarıyla işlendi!")
         else:
             st.error("❌ Veri bulunamadı veya aktarım başarısız.")
 
 # ==========================================
-# PAGE 2: PERFORMANS & LOGLANAN YÜKLEYİCİ LİSTESİ
+# PAGE 2: PERFORMANS & YÜKLEYİCİ LİSTESİ
 # ==========================================
 elif page == "📈 Yüklenecek Kişiler & Miktarlar":
     st.title("📈 Yüklenecek Kişiler ve Puan/Miktar Tablosu")
     
     df = st.session_state.get("last_processed_df", None)
     if df is not None and not df.empty:
-        st.subheader("📋 Genel Performans Tablosu (Düzenlenebilir & Loglanır)")
-        st.info("💡 **Canlı Takip:** Tabloda yapılan her değişiklik kullanıcı adı ve tarih bilgisiyle log dosyasına yazılır.")
+        st.subheader("📋 Genel Performans Tablosu (Düzenlenebilir)")
         
         search_query = st.text_input("🔍 Personel / Nick Arama:", "")
         if search_query:
@@ -297,7 +314,6 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
         else:
             df_filtered = df.copy()
 
-        # ✏️ DÜZENLEME CALLBACK MEKANİZMASI İLE GENEL TABLO
         edited_genel_df = st.data_editor(
             df_filtered,
             num_rows="dynamic",
@@ -317,7 +333,7 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
         with col_month_sel:
             target_month_to_process = st.selectbox(
                 "İşlenecek Hedef Ayı Seçin:", 
-                ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylul", "Ekim", "Kasım", "Aralık"],
+                ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"],
                 index=6
             )
 
@@ -327,7 +343,7 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
             process_btn = st.button("⚡ ZA Miktarlarını İşle", type="primary", use_container_width=True)
 
         if process_btn:
-            log_change_to_file("ZA MİKTARLARI İŞLENDİ", st.session_state.get('current_user'), f"Hedef Ay: {target_month_to_process}")
+            append_log_to_modbot_sheet("ZA MİKTARLARI İŞLENDİ", f"Hedef Ay: {target_month_to_process}")
             with st.spinner("ZA verileri işleniyor..."):
                 sheets_data = get_available_spreadsheets(creds_input)
                 filtered_report_sheets = {name: sid for name, sid in sheets_data.get("all", {}).items() if "global perf" in name.lower()}
@@ -354,8 +370,8 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
 
         st.markdown("---")
         
-        # 🎁 YÜKLEYİCİ DÜZENLEME & LOG TABLOSU
-        st.subheader("🚀 Yükleyici İçin Temiz Liste (Düzenlenebilir & Loglanır)")
+        # 🎁 YÜKLEYİCİ CANLI DÜZENLEME TABLOSU
+        st.subheader("🚀 Yükleyici İçin Temiz Liste (Düzenlenebilir)")
         
         cols = edited_genel_df.columns.tolist()
         user_col = cols[1] if len(cols) > 1 else cols[0]
@@ -390,7 +406,6 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
         df_loader_base = df_loader_base[df_loader_base["numeric_za"] > 0]
         df_editable = df_loader_base[["Kullanıcı / Personel", "Yüklenecek Son ZA Miktarı"]].reset_index(drop=True)
 
-        # ✏️ DÜZENLEME LOGLANAN TABLO
         edited_loader_df = st.data_editor(
             df_editable,
             num_rows="dynamic",
@@ -409,7 +424,7 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
                 mime="text/plain",
                 use_container_width=True
             ):
-                log_change_to_file("İNDİRME", st.session_state.get('current_user'), "Yükleyici listesi indirildi.")
+                append_log_to_modbot_sheet("İNDİRME", "Yükleyici TXT listesi indirildi.")
 
         with col_dl2:
             csv_full = edited_genel_df.to_csv(index=False).encode('utf-8')
@@ -420,7 +435,7 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
                 mime="text/csv",
                 use_container_width=True
             ):
-                log_change_to_file("İNDİRME", st.session_state.get('current_user'), "Tüm Genel Performans Tablosu CSV indirildi.")
+                append_log_to_modbot_sheet("İNDİRME", "Genel Performans CSV indirildi.")
     else:
         st.info("ℹ️ Henüz işlenmiş bir veri yok. Lütfen önce 'Rapor Çalıştır' sayfasından işlemi başlatın.")
 
@@ -479,25 +494,3 @@ elif page == "📅 Aylık Raporlar":
                     st.warning("⚠️ Seçilen sekme boş!")
         except Exception as e:
             st.error(f"❌ Rapor okuma hatası: {e}")
-
-# ==========================================
-# PAGE 4: CANLI LOG TAKİP PANELİ
-# ==========================================
-elif page == "📜 Değişiklik Logları":
-    st.title("📜 Kullanıcı Değişiklik & Sistem Logları")
-    st.info("💡 Panel üzerinden yapılan tüm veri düzenlemeleri, yeni satır ekleme/silme işlemleri ve dosya indirmeleri tarih saatiyle burada listelenir.")
-
-    if os.path.exists(log_filename):
-        with open(log_filename, "r", encoding="utf-8") as f:
-            log_content = f.read()
-        
-        st.text_area("📄 `logs/loader_changes.log` Dosya İçeriği", value=log_content, height=450)
-        
-        st.download_button(
-            label="📥 Log Dosyasını İndir (.log)",
-            data=log_content,
-            file_name=f"loader_changes_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log",
-            mime="text/plain"
-        )
-    else:
-        st.warning("⚠️ Henüz kayıtlı bir log bulunamadı.")
