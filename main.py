@@ -14,7 +14,7 @@ LOG_SHEET_NAME = "ModBot.log"
 
 # Sayfa Yapılandırması
 st.set_page_config(
-    page_title="Zula Raporlama Paneli",
+    page_title="QA Control Center — Yönetim Paneli",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -61,7 +61,7 @@ def get_credentials():
 
 creds_input = get_credentials()
 
-# --- GOOGLE SHEETS "ModBot.log" DOSYASINA LOG YAZMA ---
+# --- GOOGLE SHEETS "ModBot.log" DOSYASINA LOG YAZMA (KAYMAYI ÖLEYEN A SÜTUNU MODELİ) ---
 def append_log_to_google_sheet(creds, status, details):
     """Log kayıtlarını ModBot.log Google Sheet dosyasına her zaman A sütunundan başlayarak işler."""
     try:
@@ -89,14 +89,12 @@ def append_log_to_google_sheet(creds, status, details):
             "Hata Detayı"
         ]
 
-        # Başlık yoksa ekle
         if len(all_vals) == 0:
             ws.update(range_name='A1', values=[headers])
             next_row = 2
         else:
             next_row = len(all_vals) + 1
 
-        # Parametrelerin güvenli dönüştürülmesi
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         user_name = details.get("user") or st.session_state.get("current_user") or "Bilinmeyen Kullanıcı"
         source_val = str(details.get("source") or "-")
@@ -116,11 +114,11 @@ def append_log_to_google_sheet(creds, status, details):
             error_msg    # H: Hata Detayı
         ]
 
-        # Doğrudan A sütunundaki ilgili satıra yazar (A:H aralığı)
         ws.update(range_name=f'A{next_row}:H{next_row}', values=[row], value_input_option="USER_ENTERED")
 
     except Exception as e:
         print(f"Google Sheet Log Yazma Hatası: {e}")
+
 # --- OTURUM VE ZAMAN AŞIMI YÖNETİMİ ---
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
@@ -157,7 +155,7 @@ def check_session_timeout():
 
 check_session_timeout()
 
-# --- SADECE ŞİFRE İLE GİRİŞ EKRANI (Gömülü SVG Logolu) ---
+# --- SADECE ŞİFRE İLE GİRİŞ EKRANI ---
 def login_screen():
     st.markdown("""
         <style>
@@ -216,9 +214,7 @@ def login_screen():
     with center_col:
         st.write("")
         st.write("")
-        
-        # Kesintisiz ZULA Tasarımlı Logo
-        st.markdown('<div class="brand-logo-title">⚡ZULA OYUN⚡</div>', unsafe_allow_html=True)
+        st.markdown('<div class="brand-logo-title">⚡ ZULA QA ⚡</div>', unsafe_allow_html=True)
 
         with st.form("login_form"):
             password_input = st.text_input("GİRİŞ ŞİFRESİ", type="password", placeholder="••••••••••••")
@@ -289,7 +285,6 @@ try:
     source_sheets_dict = sheets_data.get("source", sheets_data.get("all", {}))
     report_sheets_dict = sheets_data.get("report", sheets_data.get("all", {}))
     
-    # 1. KAYNAK TABLO
     filtered_source_dict = {
         name: sheet_id for name, sheet_id in source_sheets_dict.items()
         if "global perf" not in name.lower() and name.lower() != LOG_SHEET_NAME.lower()
@@ -297,7 +292,6 @@ try:
     source_sheets_dict = filtered_source_dict
     source_options = list(source_sheets_dict.keys())
     
-    # 2. RAPOR TABLOSU (Global Perf)
     filtered_report_dict = {
         name: sheet_id for name, sheet_id in report_sheets_dict.items()
         if "global perf" in name.lower()
@@ -374,7 +368,6 @@ if submit_button:
 
     try:
         with st.spinner("⏳ Veriler Google Sheets üzerinden okunuyor ve işleniyor, lütfen bekleyin..."):
-            # selected_lang="Tümü" parametresi zorunlu olduğu için eklendi
             worker = QAReportWorker(
                 creds_input=creds_input,
                 source_id=source_id,
@@ -386,31 +379,26 @@ if submit_button:
                 progress_callback=progress_callback
             )
             
-            # Raporu İşle ve Ana Tabloyu Güncelle
+            # Raporu İşle
             updated_data = worker.process()
         
-        # ModBot.log Google Sheets Dosyasına Başarılı Logu Yaz
+        # ModBot.log Google Sheet Dosyasına Başarılı Kaydı
         append_log_to_google_sheet(creds_input, "Başarılı ✅", job_details)
         
-        st.success("✅ Rapor başarıyla güncellendi ve ana tabloya aktarıldı!")
-        
         if updated_data is not None and isinstance(updated_data, pd.DataFrame) and not updated_data.empty:
+            st.success("✅ Rapor başarıyla işlendi ve ana tabloya aktarıldı!")
             st.subheader("👁️ Güncellenen Veri Önizlemesi")
             st.dataframe(updated_data, use_container_width=True)
+        else:
+            st.warning("⚠️ İşlem tamamlandı fakat seçilen Ay/Yıl filtresine uygun veri bulunamadı veya aktarılan tablo boş kaldı.")
 
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
         job_details["error"] = str(e)
         
-        # Hata durumunda log yaz
         append_log_to_google_sheet(creds_input, "Hata ❌", job_details)
-        
-        st.error(f"❌ İşlem sırasında hata oluştu: {str(e)}")
-        with st.expander("🔍 Hata Detayını Gör"):
-            st.code(error_details, language="python")
-        
-        # ModBot.log Google Sheets Dosyasına Hata Yaz
-        append_log_to_google_sheet(creds_input, "Hata ❌", job_details)
-        
         st.error(f"❌ İşlem sırasında bir hata oluştu: {str(e)}")
+        
+        with st.expander("🔍 Teknik Hata Detayını Gör"):
+            st.code(error_details, language="python")
