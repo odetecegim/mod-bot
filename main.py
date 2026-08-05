@@ -207,7 +207,7 @@ def login_screen():
     with center_col:
         st.write("")
         st.write("")
-        st.image(zula_logo_url, use_column_width=True)
+        st.image(zula_logo_url, use_container_width=True) # use_container_width olarak güncellendi
         st.write("")
 
         with st.form("login_form"):
