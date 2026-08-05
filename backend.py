@@ -2,13 +2,7 @@ import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
 
-# ==========================================
-# 🔍 GOOGLE DRIVE / SHEETS LISTELEME
-# ==========================================
 def get_available_spreadsheets(creds_input):
-    """
-    Google Drive üzerindeki erişilebilir tüm Google Sheets dosyalarını listeler.
-    """
     spreadsheets = {"all": {}}
     try:
         scopes = [
@@ -26,15 +20,11 @@ def get_available_spreadsheets(creds_input):
 
         for f in files:
             spreadsheets["all"][f.title] = f.id
-
     except Exception as e:
         print(f"Spreadsheet listeleme hatası: {e}")
 
     return spreadsheets
 
-# ==========================================
-# 📊 QA REPORT WORKER (RAPOR İŞLEME MOTORU)
-# ==========================================
 class QAReportWorker:
     def __init__(self, creds_input, source_id, report_id, selected_year, selected_month, log_callback=print, progress_callback=None):
         self.creds_input = creds_input
@@ -62,24 +52,35 @@ class QAReportWorker:
             self.progress_callback(10)
             client = self._get_client()
 
-            # Kaynak dosyayı aç
             self.log_callback("📂 Kaynak dosya açılıyor...")
             src_wb = client.open_by_key(self.source_id)
-            src_ws = src_wb.sheet1
+            
+            # İlk dolu sekmeyi bul
+            src_ws = None
+            for ws in src_wb.worksheets():
+                vals = ws.get_all_values()
+                if vals and len(vals) > 1:
+                    src_ws = ws
+                    break
+            
+            if not src_ws:
+                src_ws = src_wb.sheet1
+
             self.progress_callback(30)
 
-            # Veriyi oku
-            data = src_ws.get_all_records()
-            if not data:
-                self.log_callback("⚠️ Kaynak dosyada veri bulunamadı!")
+            # Esnek Veri Okuma
+            raw_data = src_ws.get_all_values()
+            if not raw_data or len(raw_data) < 2:
+                self.log_callback("⚠️ Kaynak dosyada yeterli veri bulunamadı!")
                 return None
 
-            df = pd.DataFrame(data)
-            df.columns = [str(c).strip() for c in df.columns]
+            headers = [str(h).strip() for h in raw_data[0]]
+            df = pd.DataFrame(raw_data[1:], columns=headers)
+            
             self.log_callback(f"📊 Toplam {len(df)} satır veri okundu.")
             self.progress_callback(50)
 
-            # Sayısal sütunları düzelt ve temizle
+            # Formül hesaplamaları
             score_cols = [
                 "Zula Pass", "0 Kul. TESTİ", "Genel Check", "Hata bildirimi", 
                 "Öneri Bildirimi", "Discord PC", "Hakemlik", "Diğer/Kanaat"
@@ -99,7 +100,7 @@ class QAReportWorker:
 
             self.progress_callback(75)
 
-            # Hedef rapora kaydet
+            # Hedef dosyaya yaz
             self.log_callback("💾 Hedef rapora veriler yazılıyor...")
             rep_wb = client.open_by_key(self.report_id)
             rep_ws = rep_wb.sheet1
@@ -108,7 +109,7 @@ class QAReportWorker:
             data_to_write = [df_to_write.columns.tolist()] + df_to_write.astype(str).values.tolist()
 
             rep_ws.clear()
-            rep_ws.update('A1', data_to_write)
+            rep_ws.update(data_to_write, 'A1')
 
             self.progress_callback(100)
             self.log_callback("✅ Rapor işleme ve aktarım başarıyla tamamlandı!")
@@ -118,32 +119,24 @@ class QAReportWorker:
             self.log_callback(f"❌ Rapor işleme hatası: {e}")
             return None
 
-# ==========================================
-# ⚡ AY TABLOSUNA VERİ İŞLEME & DİNAMİK SEKME BULUCU
-# ==========================================
+
 def process_za_and_insert_month(main_ws, target_month_name, selected_year=2026, log_func=print):
-    """
-    Hedef Google Sheets belgesinde 'ENG Temmuz 2026', 'POR TEMMUZ 2026' gibi dinamik isimli sekmeleri bulur 
-    ve ZA verilerini tam olarak o sekmedeki ilgili ay/personel sütunlarına işler.
-    """
     try:
         wb = main_ws.spreadsheet
         all_worksheets = wb.worksheets()
         sheet_titles = [ws.title for ws in all_worksheets]
         
         target_ws = None
-        
-        # 1. Sekme adını dinamik ara (Örn: "Temmuz" ve "2026" kelimelerini içeren sekme)
         target_month_clean = str(target_month_name).strip().lower()
         target_year_clean = str(selected_year).strip()
 
+        # 1. Sekmeyi bul (Örn: "ENG Temmuz 2026")
         for ws in all_worksheets:
             title_clean = ws.title.lower()
             if target_month_clean in title_clean and target_year_clean in title_clean:
                 target_ws = ws
                 break
 
-        # Tam yıl içeren bulunamazsa sadece Ay ismine göre ara (örn: "ENG TEMMUZ")
         if not target_ws:
             for ws in all_worksheets:
                 if target_month_clean in ws.title.lower():
@@ -151,19 +144,18 @@ def process_za_and_insert_month(main_ws, target_month_name, selected_year=2026, 
                     break
 
         if not target_ws:
-            log_func(f"❌ '{target_month_name} {selected_year}' içeren uygun sekme bulunamadı! Mevcut sekmeler: {', '.join(sheet_titles[:5])}...")
+            log_func(f"❌ '{target_month_name} {selected_year}' sekmesi bulunamadı! Mevcut sekmeler: {', '.join(sheet_titles[:4])}...")
             return False
 
-        log_func(f"🎯 Hedef sekme tespit edildi: [{target_ws.title}]")
+        log_func(f"🎯 Hedef sekme bulundu: [{target_ws.title}]")
 
-        # 2. Ana tablodaki verileri al
-        data = main_ws.get_all_records()
-        if not data:
+        # 2. Ana tablodan veri al
+        raw_main = main_ws.get_all_values()
+        if not raw_main or len(raw_main) < 2:
             log_func("⚠️ Ana çalışma sayfasında işlenecek veri bulunamadı!")
             return False
 
-        df_main = pd.DataFrame(data)
-        df_main.columns = [str(c).strip() for c in df_main.columns]
+        df_main = pd.DataFrame(raw_main[1:], columns=[str(h).strip() for h in raw_main[0]])
 
         user_col = None
         for col in ["Nick", "Personel", "Kullanıcı", "Ad Soyad"]:
@@ -172,12 +164,11 @@ def process_za_and_insert_month(main_ws, target_month_name, selected_year=2026, 
                 break
                 
         if not user_col:
-            log_func("❌ Ana tabloda 'Nick' veya 'Personel' sütunu bulunamadı!")
-            return False
+            user_col = df_main.columns[0]
 
         za_col = "ZA" if "ZA" in df_main.columns else df_main.columns[-1]
 
-        # 3. Bulunan Hedef Sekmeye (örn: ENG Temmuz 2026) veriyi işle
+        # 3. Sekmeye Veri Yaz
         target_rows = target_ws.get_all_values()
         
         if not target_rows:
@@ -187,7 +178,7 @@ def process_za_and_insert_month(main_ws, target_month_name, selected_year=2026, 
                 rows_to_write.append([str(row[user_col]), str(row[za_col])])
             
             target_ws.clear()
-            target_ws.update('A1', rows_to_write)
+            target_ws.update(rows_to_write, 'A1')
         else:
             headers = [str(h).strip() for h in target_rows[0]]
             
@@ -200,7 +191,6 @@ def process_za_and_insert_month(main_ws, target_month_name, selected_year=2026, 
             if col_idx == -1:
                 headers.append(f"{target_month_name} ZA")
                 col_idx = len(headers)
-                target_ws.update_cell(1, col_idx, f"{target_month_name} ZA")
 
             main_dict = dict(zip(df_main[user_col].astype(str).str.strip(), df_main[za_col].astype(str).str.strip()))
             
@@ -218,11 +208,11 @@ def process_za_and_insert_month(main_ws, target_month_name, selected_year=2026, 
                 updated_rows.append(row)
 
             target_ws.clear()
-            target_ws.update('A1', updated_rows)
+            target_ws.update(updated_rows, 'A1')
 
-        log_func(f"✅ Veriler başarıyla [{target_ws.title}] sekmesine aktarıldı!")
+        log_func(f"✅ Veriler başarıyla [{target_ws.title}] sekmesine yazıldı!")
         return True
 
     except Exception as e:
-        log_func(f"❌ Akış Hatası: {e}")
+        log_func(f"❌ İşlem Hatası: {e}")
         return False
