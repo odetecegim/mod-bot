@@ -155,7 +155,7 @@ def check_session_timeout():
 
 check_session_timeout()
 
-# --- SADECE ŞİFRE İLE GİRİŞ EKRANI (Düzeltilmiş Şablon) ---
+# --- SADECE ŞİFRE İLE GİRİŞ EKRANI ---
 def login_screen():
     zula_logo_url = "https://upload.wikimedia.org/wikipedia/commons/9/91/Zula_New_LOGO_VECTOR.png"
 
@@ -198,17 +198,30 @@ def login_screen():
                 color: #94a3b8;
                 margin-top: 1.2rem;
             }
+            .logo-container {
+                text-align: center;
+                margin-bottom: 1.5rem;
+            }
+            .logo-container img {
+                max-width: 200px;
+                height: auto;
+                filter: drop-shadow(0 0 15px rgba(245, 158, 11, 0.4));
+            }
         </style>
     """, unsafe_allow_html=True)
 
-    # Kolonlar sayesinde ekran genişliğine bağımsız tam orantılı kart yerleşimi
     _, center_col, _ = st.columns([1, 1.2, 1])
 
     with center_col:
         st.write("")
         st.write("")
-        st.image(zula_logo_url, use_container_width=True) # use_container_width olarak güncellendi
-        st.write("")
+        
+        # Güvenli Logo Yükleme (Hata durumunda kırık ikon göstermez)
+        st.markdown(f'''
+            <div class="logo-container">
+                <img src="{zula_logo_url}" onerror="this.style.display='none'">
+            </div>
+        ''', unsafe_allow_html=True)
 
         with st.form("login_form"):
             password_input = st.text_input("GİRİŞ ŞİFRESİ", type="password", placeholder="••••••••••••")
