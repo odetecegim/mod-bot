@@ -68,8 +68,9 @@ def get_month_number(month_str):
 
 def match_names(target_name, src_name):
     """
-    Kullanıcı isimlerini ve Nick'lerini hassas şekilde eşleştirir.
-    Soyad benzerliklerinden kaynaklı yanlış eşleşmeleri engeller.
+    Kullanıcı isimlerini ve Nick'lerini SIKI (STRICT) şekilde eşleştirir.
+    Sadece soyadı aynı olan (örn: Dejan Rajic vs Stefan Rajic) kişilerin 
+    birbiri yerine puan almasını BİREBİR engelleyebilir.
     """
     t_clean = clean_name_string(target_name)
     s_clean = clean_name_string(src_name)
@@ -77,6 +78,24 @@ def match_names(target_name, src_name):
     if not t_clean or not s_clean:
         return False
 
+    # 1. Birebir Tam Metin Eşleşmesi (örn: stefanrajic == stefanrajic)
+    if t_clean == s_clean:
+        return True
+
+    t_words = [w for w in normalize_text(target_name).split() if len(w) > 1]
+    s_words = [w for w in normalize_text(src_name).split() if len(w) > 1]
+
+    # 2. Ad + Soyad Kontrolü (İki isimde de en az 2 kelime varsa ADI VE SOYADI BİREBİR EŞİT OLMALI)
+    if len(t_words) >= 2 and len(s_words) >= 2:
+        return sorted(t_words) == sorted(s_words)
+
+    # 3. Eğer ham veride SADECE Nick yazıyorsa (Örn: EMGSTEFKY007 veya Dev1to)
+    # Hedefteki Nick veya Ad-Soyad ile BİREBİR eşit olmalıdır.
+    if len(s_clean) >= 3 and len(t_clean) >= 3:
+        if s_clean == t_clean:
+            return True
+
+    return False
     # 1. Birebir Tam Eşleşme (Örn: stefanrajic == stefanrajic)
     if t_clean == s_clean:
         return True
