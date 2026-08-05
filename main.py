@@ -6,19 +6,18 @@ import time
 from datetime import datetime
 from backend import QAReportWorker, get_available_spreadsheets
 
-# Streamlit Konfigürasyonu (En Üstte Olmalıdır)
+# Streamlit Konfigürasyonu
 st.set_page_config(
-    page_title="Game Moderation",
+    page_title="QA Report Automation",
+    page_icon="📊",
     layout="wide"
 )
 
-# --- SABİTLER VE AYARLAR ---
 ONE_HOUR_SECONDS = 3600
 
 # ==========================================
-# 🔐 OTURUM VE ZAMAN AŞIMI YÖNETİMİ
+# 🔐 OTURUM YÖNETİMİ
 # ==========================================
-
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
 if "current_user" not in st.session_state:
@@ -27,6 +26,8 @@ if "login_time" not in st.session_state:
     st.session_state["login_time"] = None
 if "login_date" not in st.session_state:
     st.session_state["login_date"] = None
+if "last_processed_df" not in st.session_state:
+    st.session_state["last_processed_df"] = None
 
 def check_session_timeout():
     if st.session_state["authenticated"] and st.session_state["login_time"] is not None:
@@ -36,89 +37,34 @@ def check_session_timeout():
         if st.session_state["login_date"] is not None and current_date != st.session_state["login_date"]:
             st.session_state["authenticated"] = False
             st.session_state["current_user"] = None
-            st.session_state["login_time"] = None
-            st.session_state["login_date"] = None
-            st.warning("⚠️ Gece yarısı (00:00) olduğu için oturumunuz otomatik kapatıldı.")
+            st.warning("⚠️ Gece yarısı oturumunuz kapatıldı.")
             return
 
         elapsed = now - st.session_state["login_time"]
         if elapsed > ONE_HOUR_SECONDS:
             st.session_state["authenticated"] = False
             st.session_state["current_user"] = None
-            st.session_state["login_time"] = None
-            st.session_state["login_date"] = None
-            st.warning("⚠️ Oturum süreniz (1 saat) dolduğu için kilit ekranına yönlendirildiniz.")
+            st.warning("⚠️ Oturum süreniz doldu.")
 
 check_session_timeout()
 
 # ==========================================
-# 🔑 SADECE ŞİFRE İLE GİRİŞ EKRANI
+# 🔑 GİRİŞ EKRANI
 # ==========================================
-
 def login_screen():
     st.markdown("""
         <style>
-            .stApp {
-                background: radial-gradient(circle at center, #2a2d34 0%, #121316 60%, #08080a 100%) !important;
-            }
-            div[data-testid="stForm"] {
-                background: rgba(18, 20, 26, 0.95) !important;
-                border: 1px solid rgba(255, 255, 255, 0.15) !important;
-                border-radius: 16px !important;
-                padding: 2rem 1.5rem !important;
-                box-shadow: 0 20px 40px rgba(0,0,0,0.8) !important;
-            }
-            label {
-                color: #f1f5f9 !important;
-                font-size: 13px !important;
-                font-weight: 600 !important;
-            }
-            div[data-baseweb="input"] {
-                background-color: rgba(10, 11, 15, 0.9) !important;
-                border: 1px solid rgba(255, 255, 255, 0.2) !important;
-                border-radius: 10px !important;
-                color: #ffffff !important;
-            }
-            div[data-testid="stFormSubmitButton"] > button {
-                background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%) !important;
-                color: #ffffff !important;
-                border: none !important;
-                border-radius: 10px !important;
-                height: 45px !important;
-                font-weight: 700 !important;
-                font-size: 14px !important;
-                margin-top: 10px !important;
-            }
-            .footer-text {
-                text-align: center;
-                font-size: 12px;
-                color: #94a3b8;
-                margin-top: 1.2rem;
-            }
-            .brand-logo-container {
-                text-align: center;
-                margin-bottom: 1rem;
-            }
-            .brand-logo-img {
-                max-width: 10px;
-                height: auto;
-                filter: drop-shadow(0px 0px 8px rgba(245, 158, 11, 0.4));
-            }
+            .stApp { background: radial-gradient(circle at center, #2a2d34 0%, #121316 60%, #08080a 100%) !important; }
+            div[data-testid="stForm"] { background: rgba(18, 20, 26, 0.95) !important; border-radius: 16px !important; }
+            .brand-logo-container { text-align: center; margin-bottom: 1rem; }
+            .brand-logo-img { max-width: 70px; height: auto; }
         </style>
     """, unsafe_allow_html=True)
 
     _, center_col, _ = st.columns([1, 1.2, 1])
-
     with center_col:
         st.write("")
-        st.write("")
-        
-        # --- KÜÇÜLTÜLMÜŞ LOGO ---
-        st.markdown('''
-            <div class="brand-logo-container">
-                <img src="https://resmim.net/cdn/2026/08/05/EYU08h.webp" class="brand-logo-img" alt="Zula Logo">
-            </div>
-        ''', unsafe_allow_html=True)
+        st.markdown('<div class="brand-logo-container"><img src="https://resmim.net/cdn/2026/08/05/EYU08h.webp" class="brand-logo-img"></div>', unsafe_allow_html=True)
 
         with st.form("login_form"):
             password_input = st.text_input("GİRİŞ ŞİFRESİ", type="password", placeholder="••••••••••••")
@@ -127,12 +73,7 @@ def login_screen():
             if submit:
                 raw_users = st.secrets.get("USERS", {})
                 typed_pass = password_input.strip()
-
-                found_user = None
-                for user_name, user_pass in raw_users.items():
-                    if str(user_pass).strip() == typed_pass:
-                        found_user = str(user_name).strip()
-                        break
+                found_user = next((u for u, p in raw_users.items() if str(p).strip() == typed_pass), None)
 
                 if found_user:
                     st.session_state["authenticated"] = True
@@ -141,166 +82,144 @@ def login_screen():
                     st.session_state["login_date"] = datetime.now().date()
                     st.rerun()
                 else:
-                    st.error("❌ Hatalı veya Geçersiz Şifre!")
+                    st.error("❌ Hatalı Şifre!")
 
-        st.markdown('<div class="footer-text">🔒 Oturum süresi: <strong>1 Saat / Gece 00:00 Çıkışlı</strong></div>', unsafe_allow_html=True)
-        
 if not st.session_state.get("authenticated", False):
     login_screen()
     st.stop()
 
 # ==========================================
-# 📊 UYGULAMA ANA ARAYÜZÜ (GİRİŞ SONRASI)
+# 📌 SOL MENÜ VE NAVİGASYON
 # ==========================================
-
-# Yan Menüde Kullanıcı Bilgisi ve Çıkış Butonu
 with st.sidebar:
     st.write(f"👤 **Kullanıcı:** {st.session_state.get('current_user', 'Bilinmeyen')}")
+    page = st.radio("📌 Navigasyon", ["🚀 Rapor Çalıştır", "📈 Yüklenecek Kişiler & Miktarlar", "📅 Aylık Raporlar"], index=0)
+    
     if st.button("🚪 Çıkış Yap"):
         st.session_state["authenticated"] = False
-        st.session_state["current_user"] = None
         st.rerun()
 
-st.title("Zula Game Moderation")
-
-# --- CREDENTIALS YÜKLEME / OKUMA ---
+# Creds okuma
 creds_input = None
-
 if hasattr(st, "secrets") and len(st.secrets) > 0:
     for k in st.secrets:
         if k.lower() in ["gcp_service_account", "credentials", "service_account"]:
             creds_input = dict(st.secrets[k])
             break
 
-if not creds_input:
-    for f_name in ["credentials.json", "service_account.json"]:
-        if os.path.exists(f_name):
-            try:
-                with open(f_name, "r", encoding="utf-8") as f:
-                    creds_input = json.load(f)
-                break
-            except Exception:
-                pass
-
-if not creds_input:
-    st.error("❌ Google Service Account anahtarı okunamadı. Lütfen Secrets yapısını veya credentials.json dosyasını kontrol edin.")
-    st.stop()
-
 # ==========================================
-# 📁 ETABLO SEÇİM ALANI (FİLTRELENMİŞ LISTELER)
+# PAGE 1: RAPOR ÇALIŞTIR
 # ==========================================
-
-sheets_data = get_available_spreadsheets(creds_input)
-all_sheets = sheets_data.get("all", {})
-
-if "error" in sheets_data:
-    st.error(f"❌ Google Drive Bağlantı Hatası: {sheets_data['error']}")
-    st.stop()
-
-if not all_sheets:
-    st.warning("⚠️ Hesabınıza tanımlı hiç Google Sheets dosyası bulunamadı.")
-    st.stop()
-
-# 1. Kaynak Listesi: "Global Perf Tablosu" ve log dosyaları gizlendi
-filtered_source_sheets = {
-    name: sid for name, sid in all_sheets.items()
-    if "global perf" not in name.lower() and not name.lower().endswith(".log") and "modbot" not in name.lower()
-}
-sorted_source_names = sorted(list(filtered_source_sheets.keys()))
-
-# 2. Hedef Listesi: Sadece "Global Perf Tablosu" kalsın
-filtered_report_sheets = {
-    name: sid for name, sid in all_sheets.items()
-    if "global perf" in name.lower()
-}
-sorted_report_names = sorted(list(filtered_report_sheets.keys()))
-
-if not sorted_report_names:
-    sorted_report_names = sorted(list(all_sheets.keys()))
-    filtered_report_sheets = all_sheets
-
-st.subheader("⚙️ Dosya Seçimleri")
-col_src, col_rep = st.columns(2)
-
-with col_src:
-    selected_source_name = st.selectbox(
-        "📁 Kaynak (Ham Veri) Dosyası:",
-        options=sorted_source_names,
-        index=0 if sorted_source_names else 0,
-        help="İşlenecek ham veri tablosunu seçin."
-    )
-    source_id = filtered_source_sheets.get(selected_source_name, "")
-
-with col_rep:
-    selected_report_name = st.selectbox(
-        "🎯 Hedef (Ana Konsolide Rapor) Dosyası:",
-        options=sorted_report_names,
-        index=0,
-        help="Puanların yazılacağı Global Perf Tablosu dosyasını seçin."
-    )
-    report_id = filtered_report_sheets.get(selected_report_name, "")
-
-# ==========================================
-# 📅 TARIH SEÇİMLERİ (2026 VE SONRASI)
-# ==========================================
-
-col_month, col_year = st.columns(2)
-
-with col_month:
-    months = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
-    selected_month = st.selectbox("📅 Ay Seçimi:", options=months, index=0)
-
-with col_year:
-    years = [2026, 2027, 2028, 2029, 2030]
-    selected_year = st.selectbox("📆 Yıl Seçimi:", options=years, index=0)
-
-st.markdown("---")
-
-# ==========================================
-# 🚀 ARAYÜZ CANLI LOG VE ÇALIŞTIRMA
-# ==========================================
-
-log_container = st.empty()
-log_messages = []
-
-def append_log(message):
-    log_messages.append(message)
-    log_container.text_area("📋 İşlem Canlı Logları", value="\n".join(log_messages), height=220)
-
-progress_bar = st.progress(0)
-
-def update_progress(val):
-    progress_bar.progress(val)
-
-if st.button("🚀 Raporu Çalıştır", type="primary", use_container_width=True):
-    log_messages.clear()
-    append_log(f"🔄 İşlem başlatılıyor... (Filtre: {selected_month} {selected_year})")
+if page == "🚀 Rapor Çalıştır":
+    st.title("📊 QA Rapor Otomasyonu")
     
-    try:
+    sheets_data = get_available_spreadsheets(creds_input)
+    all_sheets = sheets_data.get("all", {})
+
+    filtered_source_sheets = {name: sid for name, sid in all_sheets.items() if "global perf" not in name.lower()}
+    filtered_report_sheets = {name: sid for name, sid in all_sheets.items() if "global perf" in name.lower()}
+
+    col_src, col_rep = st.columns(2)
+    with col_src:
+        selected_source_name = st.selectbox("📁 Kaynak Dosya:", options=sorted(list(filtered_source_sheets.keys())))
+        source_id = filtered_source_sheets.get(selected_source_name, "")
+    with col_rep:
+        selected_report_name = st.selectbox("🎯 Hedef Dosya:", options=sorted(list(filtered_report_sheets.keys())))
+        report_id = filtered_report_sheets.get(selected_report_name, "")
+
+    col_month, col_year = st.columns(2)
+    with col_month:
+        months = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
+        selected_month = st.selectbox("📅 Ay:", options=months)
+    with col_year:
+        years = [2026, 2027, 2028, 2029, 2030]
+        selected_year = st.selectbox("📆 Yıl:", options=years)
+
+    log_container = st.empty()
+    log_messages = []
+    def append_log(msg):
+        log_messages.append(msg)
+        log_container.text_area("📋 İşlem Canlı Logları", value="\n".join(log_messages), height=200)
+
+    progress_bar = st.progress(0)
+
+    if st.button("🚀 Raporu Çalıştır", type="primary", use_container_width=True):
         worker = QAReportWorker(
             creds_input=creds_input,
             source_id=source_id,
             report_id=report_id,
-            selected_lang="Tümü",
             selected_year=selected_year,
             selected_month=selected_month,
             log_callback=append_log,
-            progress_callback=update_progress
+            progress_callback=progress_bar.progress
         )
-
         updated_df = worker.process()
-
-        # --- TARIH ARALIĞI / BOŞ VERİ HATA KONTROLÜ ---
-        if updated_df is None or updated_df.empty:
-            err_msg = f"❌ HATA: Seçtiğiniz '{selected_month} {selected_year}' dönemine ait kaynak dosyada işlenecek veri bulunamadı!"
-            append_log(err_msg)
-            st.error(err_msg)
+        if updated_df is not None and not updated_df.empty:
+            st.session_state["last_processed_df"] = updated_df
+            st.success("🎉 Veriler başarıyla işlendi! 'Yüklenecek Kişiler' sekmesinden performans tablosuna göz atabilirsiniz.")
         else:
-            st.success("🎉 Rapor verileri hedef tabloya başarıyla yazıldı!")
-            st.subheader("📊 Güncellenmiş Hedef Tablo Önizlemesi")
-            st.dataframe(updated_df, use_container_width=True)
+            st.error("❌ Veri bulunamadı veya aktarım başarısız.")
 
-    except Exception as e:
-        err_msg = f"❌ İşlem sırasında bir hata oluştu: {str(e)}"
-        st.error(err_msg)
-        append_log(err_msg)
+# ==========================================
+# PAGE 2: PERFORMANS & YÜKLENECEK KİŞİLER
+# ==========================================
+elif page == "📈 Yüklenecek Kişiler & Miktarlar":
+    st.title("📈 Yüklenecek Kişiler ve Puan/Miktar Tablosu")
+    
+    df = st.session_state.get("last_processed_df", None)
+    if df is not None and not df.empty:
+        # Sadece sayı verisi veya işlemi olan kişileri süz
+        st.subheader("📋 Yükleme Yapılacak Personel Listesi")
+        
+        # Filtreleme
+        search_query = st.text_input("🔍 Personel / Nick Arama:", "")
+        if search_query:
+            df = df[df.apply(lambda row: row.astype(str).str.contains(search_query, case=False).any(), axis=1)]
+
+        st.dataframe(df, use_container_width=True)
+
+        # İndirme Seçeneği (Excel / CSV)
+        csv = df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="📥 Performans Listesini CSV Olarak İndir",
+            data=csv,
+            file_name=f"qa_yuklenecek_kisi_ve_miktarlar_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv"
+        )
+    else:
+        st.info("ℹ️ Henüz işlenmiş bir veri yok. Lütfen önce 'Rapor Çalıştır' sayfasından işlemi başlatın.")
+
+# ==========================================
+# PAGE 3: AYLIK RAPORLAR & GEÇMİŞ
+# ==========================================
+elif page == "📅 Aylık Raporlar":
+    st.title("📅 Aylık Konsolide Rapor Görünümü")
+    st.write("Aylık bazda genel QA performans durum raporları.")
+
+    # Hedef rapor tablosunu doğrudan seçip geçmiş verileri okuma
+    sheets_data = get_available_spreadsheets(creds_input)
+    filtered_report_sheets = {name: sid for name, sid in sheets_data.get("all", {}).items() if "global perf" in name.lower()}
+    
+    if filtered_report_sheets:
+        selected_rep = st.selectbox("Özetini Görmek İstediğiniz Ana Dosyayı Seçin:", list(filtered_report_sheets.keys()))
+        rep_id = filtered_report_sheets[selected_rep]
+        
+        if st.button("📊 Aylık Verileri Getir"):
+            try:
+                import gspread
+                from google.oauth2.service_account import Credentials
+                creds = Credentials.from_service_account_info(creds_input, scopes=["https://www.googleapis.com/auth/spreadsheets"])
+                client = gspread.authorize(creds)
+                wb = client.open_by_key(rep_id)
+                
+                sheet_names = [ws.title for ws in wb.worksheets()]
+                selected_ws_name = st.selectbox("📆 İncelemek İstediğiniz Ay Sekmesini Seçin:", sheet_names)
+                
+                ws = wb.worksheet(selected_ws_name)
+                monthly_data = ws.get_all_values()
+                if monthly_data:
+                    m_df = pd.DataFrame(monthly_data[1:], columns=monthly_data[0])
+                    st.subheader(f"📑 {selected_ws_name} Sekmesi Performans Tablosu")
+                    st.dataframe(m_df, use_container_width=True)
+            except Exception as e:
+                st.error(f"❌ Rapor okuma hatası: {e}")
