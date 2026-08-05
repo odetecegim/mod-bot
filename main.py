@@ -195,8 +195,8 @@ with col_logout:
         st.session_state["login_time"] = None
         st.rerun()
 
-st.title("📊 QA Görev Raporlama Paneli")
-st.caption("Google Sheets verilerini seçilen Ay ve Yıl'a göre otomatik eşleştirin ve güncelleyin.")
+st.title(" Global Akademi Puanlama Paneli")
+st.caption("İletişim Adresi: zula.akademi@madbyegames.com")
 
 # --- GOOGLE CREDENTIALS YÖNETİMİ ---
 @st.cache_resource
