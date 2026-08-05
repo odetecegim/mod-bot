@@ -290,15 +290,13 @@ except Exception as e:
     st.error(f"Google Drive bağlantı hatası: {e}")
     st.stop()
 
-# --- DİNAMİK ZAMAN VE HESAPLAMALAR (OTOMATİK AY VE YIL SEÇİMİ) ---
+# --- DİNAMİK ZAMAN VE HESAPLAMALAR ---
 months_list = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
 now_dt = datetime.now()
 
-# Bulunduğumuz Ay ve Yıl Otomatik Tespiti
-default_month_idx = now_dt.month - 1  # 0-indexed
+default_month_idx = now_dt.month - 1
 current_year = now_dt.year
 
-# Bulunduğumuz yıldan başlayarak dinamik yıl listesi (Örn: [2025, 2026, 2027, 2028, 2029])
 years_list = [str(y) for y in range(max(2025, current_year - 1), current_year + 4)]
 default_year_idx = years_list.index(str(current_year)) if str(current_year) in years_list else 0
 
@@ -313,13 +311,11 @@ with st.form("qa_form"):
     with col2:
         report_name = st.selectbox("Rapor Tablosu (Report Sheet)", options=report_options)
 
-    col3, col4, col5 = st.columns(3)
+    col3, col4 = st.columns(2)
     
     with col3:
-        selected_lang = st.selectbox("Dil Filtresi", ["Tümü", "ENG", "ESP", "POR"])
-    with col4:
         selected_month = st.selectbox("İşlenecek Ay", months_list, index=default_month_idx)
-    with col5:
+    with col4:
         selected_year = st.selectbox("İşlenecek Yıl", years_list, index=default_year_idx)
 
     submit_button = st.form_submit_button("🚀 Raporu Çalıştır ve Güncelle", use_container_width=True)
@@ -338,33 +334,31 @@ with col_link2:
 
 st.divider()
 
-# --- İŞLEM BAŞLATMA VE LOG EKRANI ---
+# --- İŞLEM BAŞLATMA ---
 if submit_button:
     progress_bar = st.progress(0)
-    log_box = st.code("> İşlem başlatıldı...\n", language="bash")
-    logs_list = []
 
-    def log_callback(msg):
-        logs_list.append(f"> {msg}")
-        log_box.code("\n".join(logs_list), language="bash")
+    def silent_log_callback(msg):
+        pass
 
     def progress_callback(val):
         progress_bar.progress(val)
 
     try:
-        worker = QAReportWorker(
-            creds_input=creds_input,
-            source_id=source_id,
-            report_id=report_id,
-            selected_lang=selected_lang,
-            selected_year=selected_year,
-            selected_month=selected_month,
-            log_callback=log_callback,
-            progress_callback=progress_callback
-        )
-        
-        # Raporu İşle
-        updated_data = worker.process()
+        with st.spinner("⏳ Veriler Google Sheets üzerinden okunuyor ve işleniyor, lütfen bekleyin..."):
+            worker = QAReportWorker(
+                creds_input=creds_input,
+                source_id=source_id,
+                report_id=report_id,
+                selected_lang="Tümü", # Dil filtresi kaldırıldığı için varsayılan "Tümü" olarak gönderilir
+                selected_year=selected_year,
+                selected_month=selected_month,
+                log_callback=silent_log_callback,
+                progress_callback=progress_callback
+            )
+            
+            # Raporu İşle
+            updated_data = worker.process()
         
         # Başarılı İşlem Kaydı (Audit Log)
         log_entry = {
@@ -374,21 +368,16 @@ if submit_button:
             "report_table": report_name,
             "month": selected_month,
             "year": selected_year,
-            "lang": selected_lang,
             "status": "Başarılı ✅"
         }
         save_audit_log(log_entry)
         
-        st.success("✅ Rapor başarıyla güncellendi ve sisteme kaydedildi!")
+        st.success("✅ Rapor başarıyla güncellendi ve Global Perf tablosuna aktarıldı!")
         
         # Rapor Önizleme Ekranı
-        st.subheader("👁️ Güncellenen Raporun Canlı Önizlemesi")
-        if updated_data is not None and isinstance(updated_data, pd.DataFrame):
+        if updated_data is not None and isinstance(updated_data, pd.DataFrame) and not updated_data.empty:
+            st.subheader("👁️ Güncellenen Veri Önizlemesi")
             st.dataframe(updated_data, use_container_width=True)
-        elif updated_data is not None and isinstance(updated_data, list):
-            st.dataframe(pd.DataFrame(updated_data), use_container_width=True)
-        else:
-            st.info("İşlenen veri özet olarak Global Perf tablosuna aktarıldı. Yukarıdaki bağlantıdan kontrol edebilirsiniz.")
 
     except Exception as e:
         # Hatalı İşlem Kaydı (Audit Log)
@@ -399,7 +388,6 @@ if submit_button:
             "report_table": report_name,
             "month": selected_month,
             "year": selected_year,
-            "lang": selected_lang,
             "status": f"Hata ❌ ({str(e)})"
         }
         save_audit_log(log_entry)
@@ -411,7 +399,7 @@ audit_data = load_audit_logs()
 
 if audit_data:
     df_logs = pd.DataFrame(audit_data)
-    df_logs.columns = ["Tarih / Saat", "Kullanıcı", "Kaynak Tablo", "Rapor Tablosu", "Ay", "Yıl", "Dil", "Durum"]
+    df_logs.columns = ["Tarih / Saat", "Kullanıcı", "Kaynak Tablo", "Rapor Tablosu", "Ay", "Yıl", "Durum"]
     st.dataframe(df_logs, use_container_width=True, hide_index=True)
 else:
     st.caption("Henüz kayıtlı bir işlem geçmişi bulunmuyor.")
