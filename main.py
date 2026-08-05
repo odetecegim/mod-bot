@@ -72,7 +72,7 @@ with col_src:
         "📁 Kaynak (Ham Veri) Dosyası:",
         options=sorted_sheet_names,
         index=0,
-        help="İşlenecek veri tablosunu seçin (Örn: Error Reporting ENG, POR, ESP, TR)"
+        help="İşlenecek veri tablosunu seçin (Örn: Error Reporting ENG, POR, ESP)"
     )
     source_id = all_sheets[selected_source_name]
 
@@ -87,13 +87,17 @@ with col_rep:
     report_id = all_sheets[selected_report_name]
 
 # ==========================================
-# 📅 FİLTRE VE DİL SEÇİMLERİ
+# 📅 FİLTRE VE DİL SEÇİMLERİ (Sadece ENG, POR, ESP)
 # ==========================================
 
 col_lang, col_month, col_year = st.columns(3)
 
 with col_lang:
-    selected_lang = st.selectbox("🌐 Dil Filtresi / Tipi:", options=["Tümü", "ENG", "POR", "ESP", "TR"], index=0)
+    selected_lang = st.selectbox(
+        "🌐 Dil Filtresi / Tipi:", 
+        options=["Tümü", "ENG", "POR", "ESP"], 
+        index=0
+    )
 
 with col_month:
     months = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
