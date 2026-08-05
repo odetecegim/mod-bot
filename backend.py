@@ -150,7 +150,7 @@ class BaseLanguageHandler:
         return None, None
 
 class AllLanguagesHandler(BaseLanguageHandler):
-    """Tüm dillerdeki (ENG, ESP, POR, TR) sekme isimlerini destekleyen birleşik handler."""
+    """ENG, ESP ve POR sekmelerini destekleyen birleşik handler."""
     def map_category(self, ws_title):
         norm = normalize_text(ws_title)
         if self.is_ignored_sheet(norm):
@@ -166,7 +166,6 @@ class AllLanguagesHandler(BaseLanguageHandler):
         return None
 
 def get_language_handler(lang_code):
-    # Dil seçeneği ne olursa olsun genel handler ile tüm sekmeleri tarıyoruz
     return AllLanguagesHandler()
 
 # ==========================================
@@ -193,18 +192,43 @@ class QAReportWorker:
             creds = Credentials.from_service_account_file(self.creds_input, scopes=SCOPES)
         return gspread.authorize(creds)
 
-    def get_target_worksheet(self, report_wb):
+    def get_target_worksheet(self, report_wb, source_title=""):
         all_worksheets = report_wb.worksheets()
         target_month = normalize_text(self.selected_month_str)
         target_year = str(self.selected_year).strip()
 
-        # Ay ve Yıl adının geçtiği sekme
+        # Dili belirle (ENG, ESP, POR)
+        detected_lang = ""
+        if self.selected_lang in ["ENG", "ESP", "POR"]:
+            detected_lang = self.selected_lang.lower()
+        else:
+            # "Tümü" seçildiyse kaynak dosyanın başlığından tespit et
+            s_title_upper = source_title.upper()
+            for lang in ["ENG", "ESP", "POR"]:
+                if lang in s_title_upper:
+                    detected_lang = lang.lower()
+                    break
+
+        # 1. Aşama: Hem Dil, hem Ay hem de Yıl geçen tam eşleşen sekme (Örn: "ENG TEMMUZ 2026")
+        if detected_lang:
+            for ws in all_worksheets:
+                t_lower = normalize_text(ws.title)
+                if detected_lang in t_lower and target_month in t_lower and target_year in t_lower:
+                    return ws
+
+            # 1.b Aşama: Dil ve Ay geçen sekme
+            for ws in all_worksheets:
+                t_lower = normalize_text(ws.title)
+                if detected_lang in t_lower and target_month in t_lower:
+                    return ws
+
+        # 2. Aşama: Dil bulunamadıysa sadece Ay ve Yıl adının geçtiği sekme
         for ws in all_worksheets:
             t_lower = normalize_text(ws.title)
             if target_month in t_lower and target_year in t_lower:
                 return ws
 
-        # Sadece Ay adının geçtiği sekme
+        # 3. Aşama: Sadece Ay adının geçtiği sekme
         for ws in all_worksheets:
             t_lower = normalize_text(ws.title)
             if target_month in t_lower:
@@ -270,7 +294,8 @@ class QAReportWorker:
         source_wb = client.open_by_key(self.source_id)
         report_wb = client.open_by_key(self.report_id)
         
-        target_sheet = self.get_target_worksheet(report_wb)
+        # Hedef sekmeyi kaynak dosya ismine/dile göre akıllı bul
+        target_sheet = self.get_target_worksheet(report_wb, source_title=source_wb.title)
         self.log(f"Hedef Rapor Sekmesi: [{target_sheet.title}]")
         self.progress(25)
 
@@ -359,7 +384,7 @@ class QAReportWorker:
                         'range': f"{a1_cell}:{a1_cell}",
                         'values': [[int(total_score)]]
                     })
-                    self.log(f"   ✓ {t_name} = {total_score} (Eşleşen: {', '.join(matched_sources)})")
+                    self.log(f"    ✓ {t_name} = {total_score} (Eşleşen: {', '.join(matched_sources)})")
 
         self.progress(85)
 
@@ -372,7 +397,6 @@ class QAReportWorker:
             self.progress(100)
             self.log(f"⚠️ Uyarı: Seçilen filtre kriterlerine uyan kayıt bulunamadı.")
 
-        # Streamlit arayüzü önizlemesi için güncellenmiş tabloyu DataFrame olarak döndürür
         final_rows = target_sheet.get_all_values()
         if final_rows and len(final_rows) > 1:
             return pd.DataFrame(final_rows[1:], columns=final_rows[0])
