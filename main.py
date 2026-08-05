@@ -374,32 +374,41 @@ if submit_button:
 
     try:
         with st.spinner("⏳ Veriler Google Sheets üzerinden okunuyor ve işleniyor, lütfen bekleyin..."):
-            try:
-                worker = QAReportWorker(
-                    creds_input=creds_input,
-                    source_id=source_id,
-                    report_id=report_id,
-                    selected_lang="Tümü",
-                    selected_year=selected_year,
-                    selected_month=selected_month,
-                    user=current_user,
-                    log_callback=silent_log_callback,
-                    progress_callback=progress_callback
-                )
-            except TypeError:
-                worker = QAReportWorker(
-                    creds_input=creds_input,
-                    source_id=source_id,
-                    report_id=report_id,
-                    selected_lang="Tümü",
-                    selected_year=selected_year,
-                    selected_month=selected_month,
-                    log_callback=silent_log_callback,
-                    progress_callback=progress_callback
-                )
+            # Parametreleri backend'in orijinal beklentisine göre gönderiyoruz
+            worker = QAReportWorker(
+                creds_input=creds_input,
+                source_id=source_id,
+                report_id=report_id,
+                selected_year=selected_year,
+                selected_month=selected_month,
+                log_callback=silent_log_callback,
+                progress_callback=progress_callback
+            )
             
-            # Raporu İşle
+            # Raporu İşle ve Ana Tabloyu Güncelle
             updated_data = worker.process()
+        
+        # ModBot.log Google Sheets Dosyasına Başarılı Logu Yaz
+        append_log_to_google_sheet(creds_input, "Başarılı ✅", job_details)
+        
+        st.success("✅ Rapor başarıyla güncellendi ve ana tabloya aktarıldı!")
+        
+        if updated_data is not None and isinstance(updated_data, pd.DataFrame) and not updated_data.empty:
+            st.subheader("👁️ Güncellenen Veri Önizlemesi")
+            st.dataframe(updated_data, use_container_width=True)
+
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        job_details["error"] = str(e)
+        
+        # Hata durumunda log yaz
+        append_log_to_google_sheet(creds_input, "Hata ❌", job_details)
+        
+        st.error(f"❌ İşlem sırasında hata oluştu: {str(e)}")
+        # Neden çalışmadığını tam olarak görmek için teknik hatayı ekrana basıyoruz:
+        with st.expander("🔍 Hata Detayını Gör"):
+            st.code(error_details, language="python")
         
         # ModBot.log Google Sheets Dosyasına Yaz
         append_log_to_google_sheet(creds_input, "Başarılı ✅", job_details)
