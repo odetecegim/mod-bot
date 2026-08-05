@@ -15,16 +15,35 @@ st.title("📊 QA Rapor Otomasyonu")
 st.markdown("Google Sheets üzerindeki ham veri sekmelerinden performans sayılarını hesaplar ve ana rapora aktarır.")
 
 # ==========================================
-# 🔑 CREDENTIALS & SESSIONS SETUP
+# 🔑 CREDENTIALS & SECRETS OTOMATİK TESPİT
 # ==========================================
 
 creds_input = None
 
-# 1. Öncellikle Streamlit Secrets Kontrol Edilir
-if "gcp_service_account" in st.secrets:
-    creds_input = dict(st.secrets["gcp_service_account"])
-else:
-    # 2. Yerel Dosya Arama Sırası (credentials.json veya olası diğer isimler)
+# 1. Streamlit Secrets İçindeki Tüm Olası Yapıları Tara
+if len(st.secrets) > 0:
+    # A) Direkt dict / bölüm olarak kayıtlıysa
+    for key in ["gcp_service_account", "credentials", "service_account", "gspread"]:
+        if key in st.secrets:
+            creds_input = dict(st.secrets[key])
+            break
+    
+    # B) Eğer Secrets içine direkt ham JSON string olarak yapıştırıldıysa
+    if creds_input is None:
+        for key in st.secrets:
+            val = st.secrets[key]
+            if isinstance(val, str) and "private_key" in val:
+                try:
+                    creds_input = json.loads(val)
+                    break
+                except Exception:
+                    pass
+            elif isinstance(val, dict) and "private_key" in val:
+                creds_input = dict(val)
+                break
+
+# 2. Yerel Dosya Kontrolü (Eğer Secrets'ta bulunamazsa)
+if creds_input is None:
     possible_files = ["credentials.json", "service_account.json", "key.json"]
     for file_name in possible_files:
         if os.path.exists(file_name):
@@ -32,15 +51,13 @@ else:
                 with open(file_name, "r", encoding="utf-8") as f:
                     creds_input = json.load(f)
                 break
-            except Exception as e:
-                st.error(f"❌ `{file_name}` okuma hatası: {e}")
+            except Exception:
+                pass
 
+# Hata Verip Durdurma
 if creds_input is None:
-    st.error("❌ Kimlik doğrulama anahtarı bulunamadı!")
-    st.info(
-        "💡 **Çözüm:** Google Cloud'dan indirdiğiniz JSON dosyasını proje klasörünüze koyup "
-        "adını **`credentials.json`** yapın veya Streamlit Cloud kullanıyorsanız **Secrets** alanına ekleyin."
-    )
+    st.error("❌ Streamlit Secrets içinde geçerli bir Google Service Account anahtarı okunamadı.")
+    st.info("💡 Streamlit Secrets panelinde alan adınızın `[gcp_service_account]` veya `[credentials]` olduğundan emin olun.")
     st.stop()
 
 # ==========================================
@@ -62,21 +79,19 @@ if not all_sheets:
 
 sorted_sheet_names = sorted(list(all_sheets.keys()))
 
-# 1. Kaynak Tablo Seçimi (ENG / POR / ESP / TR Ham Veri Dosyası)
 selected_source_name = st.sidebar.selectbox(
     "📁 Kaynak (Ham Veri) Dosyası:",
     options=sorted_sheet_names,
     index=0,
-    help="İşlemek istediğiniz dilin (ENG, POR, ESP, TR) ham veri tablosunu seçin."
+    help="İşlemek istediğiniz dilin ham veri tablosunu seçin."
 )
 source_id = all_sheets[selected_source_name]
 
-# 2. Hedef Rapor Tablosu Seçimi (Verilerin aktarılacağı ana tablo)
 selected_report_name = st.sidebar.selectbox(
     "🎯 Hedef (Ana Rapor) Dosyası:",
     options=sorted_sheet_names,
     index=min(1, len(sorted_sheet_names) - 1),
-    help="Puanların aktarılacağı ana konsolide rapor tablosunu seçin."
+    help="Puanların aktarılacağı ana rapor tablosunu seçin."
 )
 report_id = all_sheets[selected_report_name]
 
@@ -90,22 +105,17 @@ with col_lang:
     selected_lang = st.selectbox(
         "🌐 Dil Filtresi / Tipi:",
         options=["Tümü", "ENG", "POR", "ESP", "TR"],
-        index=0,
-        help="'Tümü' seçeneği sekme ismindeki tüm dilleri otomatik algılar."
+        index=0
     )
 
 with col_month:
     months = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", 
               "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
-    selected_month = st.selectbox("📅 Ay Seçimi:", options=months, index=6) # Temmuz Varsayılan
+    selected_month = st.selectbox("📅 Ay Seçimi:", options=months, index=6)
 
 with col_year:
     years = [2024, 2025, 2026, 2027]
-    selected_year = st.selectbox("📆 Yıl Seçimi:", options=years, index=2) # 2026 Varsayılan
-
-# ==========================================
-# 📌 SEÇİM TEYİT KUTUSU
-# ==========================================
+    selected_year = st.selectbox("📆 Yıl Seçimi:", options=years, index=2)
 
 st.info(
     f"📌 **Seçilen İşlem Detayları:**\n\n"
