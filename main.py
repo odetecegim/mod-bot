@@ -345,60 +345,105 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
     st.title("📈 Yüklenecek Kişiler ve Puan/Miktar Tablosu")
     
     if "last_processed_df" in st.session_state and st.session_state["last_processed_df"] is not None and not st.session_state["last_processed_df"].empty:
-        df_master = st.session_state["last_processed_df"]
+        df_master = st.session_state["last_processed_df"].copy()
         
         st.subheader("📋 Genel Performans Tablosu (Canlı Kanaat Düzenleme & Otomatik Hesap)")
         
+        # 1. Personel / Nick Arama
         search_query = st.text_input("🔍 Personel / Nick Arama:", "")
         if search_query:
             df_display = df_master[df_master.apply(lambda row: row.astype(str).str.contains(search_query, case=False).any(), axis=1)].copy()
         else:
             df_display = df_master.copy()
 
+        # 2. Düzenlenebilir Canlı Tablo
         edited_raw_df = st.data_editor(
             df_display,
             num_rows="dynamic",
             use_container_width=True,
-            key="genel_performans_editor",
-            on_change=track_genel_editor_changes,
+            key="genel_performans_editor_v2",
             disabled=["Toplam", "ZA"]
         )
 
         # ------------------------------------------------------------------
-        # 🧮 ANLIK TOPLAM VE KANAAT PUANI YENİDEN HESAPLAMA
+        # 🧮 CANLI HESAPLAMA VE DURUM KORUMA MANTIĞI
         # ------------------------------------------------------------------
-        edited_genel_df = edited_raw_df.copy()
-        
         score_cols = [
             "Zula Pass", "0 Kul. TESTİ", "Genel Check", "Hata bildirimi", 
             "Öneri Bildirimi", "Discord PC", "Hakemlik", "Diğer/Kanaat"
         ]
         
-        valid_score_cols = [c for c in edited_genel_df.columns if any(sc.lower() in str(c).lower() for sc in score_cols)]
+        valid_score_cols = [c for c in edited_raw_df.columns if any(sc.lower() in str(c).lower() for sc in score_cols)]
 
-        # Kanaat silinse veya geçersiz rakam yazılsa bile 0 kabul ederek yeniden hesaplar
-        calc_df = pd.DataFrame()
+        # Tablodan gelen verileri temizle ve sayıya dönüştür (Silinirse 0 yap)
         for col in valid_score_cols:
-            calc_df[col] = pd.to_numeric(
-                edited_genel_df[col].astype(str).str.replace(',', '.').str.strip(), 
+            edited_raw_df[col] = pd.to_numeric(
+                edited_raw_df[col].astype(str).str.replace(',', '.').str.strip(), 
                 errors='coerce'
             ).fillna(0)
 
-        if not calc_df.empty:
-            edited_genel_df["Toplam"] = calc_df.sum(axis=1).astype(int)
-            edited_genel_df["ZA"] = edited_genel_df["Toplam"] * 500
+        # Toplam ve ZA sütunlarını ANINDA yeniden hesapla
+        if valid_score_cols:
+            edited_raw_df["Toplam"] = edited_raw_df[valid_score_cols].sum(axis=1).astype(int)
+            edited_raw_df["ZA"] = edited_raw_df["Toplam"] * 500
 
-        # DataFrame'i st.session_state üzerinde anında güncelle
-        if search_query:
-            df_master.update(edited_genel_df)
+        # Kullanıcı adını temsil eden benzersiz sütunu bul (Nick / Personel / Ad)
+        id_col = None
+        for col in ["Nick", "Personel", "Kullanıcı", "Ad Soyad"]:
+            if col in df_master.columns:
+                id_col = col
+                break
+
+        # Ana session_state tablosunu güncelle
+        if id_col:
+            df_master.set_index(id_col, inplace=True)
+            edited_temp = edited_raw_df.set_index(id_col)
+            df_master.update(edited_temp)
+            df_master.reset_index(inplace=True)
             st.session_state["last_processed_df"] = df_master
         else:
-            st.session_state["last_processed_df"] = edited_genel_df
+            st.session_state["last_processed_df"] = edited_raw_df.copy()
+
         # ------------------------------------------------------------------
+        # 💾 GOOGLE SHEETS & MODBOT.LOG SENKRONİZASYON BUTONU
+        # ------------------------------------------------------------------
+        st.write("")
+        col_save, _ = st.columns([1, 2])
+        with col_save:
+            if st.button("💾 Kanaat & Puan Değişikliklerini Google Sheets'e Kaydet", type="primary", use_container_width=True):
+                with st.spinner("Değişiklikler Google Sheets tablosuna ve ModBot.log sekmesine yazılıyor..."):
+                    try:
+                        report_id = st.session_state.get("active_report_id") or TARGET_LOG_SHEET_ID
+                        if isinstance(creds_input, dict):
+                            client = gspread.service_account_from_dict(creds_input)
+                        else:
+                            client = gspread.service_account(filename=creds_input)
+                        
+                        wb = client.open_by_key(report_id)
+                        ws = wb.active
+                        
+                        # Güncel hafızadaki veriyi Google Sheets'e toplu aktar
+                        updated_df_to_save = st.session_state["last_processed_df"]
+                        
+                        # Sütun başlıkları dahil tüm veriyi liste formatına çevir
+                        data_to_write = [updated_df_to_save.columns.tolist()] + updated_df_to_save.astype(str).values.tolist()
+                        
+                        # Hücreleri toplu olarak güncelle (Quota takılmasını ve satır kaymasını önler)
+                        ws.clear()
+                        ws.update('A1', data_to_write)
+                        
+                        # ModBot.log sekmesine kayıt at
+                        append_log_to_modbot_sheet(
+                            "KANAAT/PUAN GÜNCELLEME", 
+                            f"Toplam {len(updated_df_to_save)} satırlık tablo başarıyla güncellendi."
+                        )
+                        st.success("✅ Tüm Kanaat puanları ve hesaplamalar Google Sheets'e eksiksiz kaydedildi!")
+                    except Exception as e:
+                        st.error(f"❌ Google Sheets kaydetme hatası: {e}")
 
         st.markdown("---")
         
-        # ⚡ İŞLE BUTONU
+        # ⚡ İŞLE BUTONU (AY TABLOSUNA AKTAR)
         st.subheader("⚡ ZA Miktarlarını Ay Tablosuna Aktar & Son Miktarı Hesapla")
         
         col_month_sel, col_btn = st.columns([2, 1])
@@ -469,8 +514,7 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
             df_editable,
             num_rows="dynamic",
             use_container_width=True,
-            key="za_loader_editor",
-            on_change=track_loader_editor_changes
+            key="za_loader_editor_v2"
         )
 
         col_dl1, col_dl2 = st.columns(2)
