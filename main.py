@@ -243,8 +243,8 @@ with col_rep:
 col_month, col_year = st.columns(2)
 
 with col_month:
-    months = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylul", "Ekim", "Kasım", "Aralık"]
-    selected_month = st.selectbox("📅 Ay Seçimi:", options=months, index=6)
+    months = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
+    selected_month = st.selectbox("📅 Ay Seçimi:", options=months, index=0)
 
 with col_year:
     years = [2026, 2027, 2028, 2029, 2030]
@@ -270,7 +270,7 @@ def update_progress(val):
 
 if st.button("🚀 Raporu Çalıştır", type="primary", use_container_width=True):
     log_messages.clear()
-    append_log("🔄 İşlem başlatılıyor...")
+    append_log(f"🔄 İşlem başlatılıyor... (Filtre: {selected_month} {selected_year})")
     
     try:
         worker = QAReportWorker(
@@ -286,13 +286,17 @@ if st.button("🚀 Raporu Çalıştır", type="primary", use_container_width=Tru
 
         updated_df = worker.process()
 
-        if updated_df is not None and not updated_df.empty:
+        # --- TARIH ARALIĞI / BOŞ VERİ HATA KONTROLÜ ---
+        if updated_df is None or updated_df.empty:
+            err_msg = f"❌ HATA: Seçtiğiniz '{selected_month} {selected_year}' dönemine ait kaynak dosyada işlenecek veri bulunamadı!"
+            append_log(err_msg)
+            st.error(err_msg)
+        else:
             st.success("🎉 Rapor verileri hedef tabloya başarıyla yazıldı!")
             st.subheader("📊 Güncellenmiş Hedef Tablo Önizlemesi")
             st.dataframe(updated_df, use_container_width=True)
-        else:
-            st.warning("⚠️ Seçilen filtrelere uygun veri işlenemedi veya hedef tablo boş döndü.")
 
     except Exception as e:
-        st.error(f"❌ İşlem sırasında bir hata oluştu: {str(e)}")
-        append_log(f"❌ HATA: {str(e)}")
+        err_msg = f"❌ İşlem sırasında bir hata oluştu: {str(e)}"
+        st.error(err_msg)
+        append_log(err_msg)
