@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import json
+import os
 from backend import QAReportWorker, get_available_spreadsheets
 
 # Page Configuration
@@ -17,16 +18,30 @@ st.markdown("Google Sheets üzerindeki ham veri sekmelerinden performans sayıla
 # 🔑 CREDENTIALS & SESSIONS SETUP
 # ==========================================
 
-# Streamlit secrets veya yerel dosya üzerinden kimlik doğrulama
+creds_input = None
+
+# 1. Öncellikle Streamlit Secrets Kontrol Edilir
 if "gcp_service_account" in st.secrets:
     creds_input = dict(st.secrets["gcp_service_account"])
 else:
-    try:
-        with open("credentials.json", "r", encoding="utf-8") as f:
-            creds_input = json.load(f)
-    except Exception as e:
-        st.error("❌ `credentials.json` dosyası veya Streamlit Secrets bulunamadı!")
-        st.stop()
+    # 2. Yerel Dosya Arama Sırası (credentials.json veya olası diğer isimler)
+    possible_files = ["credentials.json", "service_account.json", "key.json"]
+    for file_name in possible_files:
+        if os.path.exists(file_name):
+            try:
+                with open(file_name, "r", encoding="utf-8") as f:
+                    creds_input = json.load(f)
+                break
+            except Exception as e:
+                st.error(f"❌ `{file_name}` okuma hatası: {e}")
+
+if creds_input is None:
+    st.error("❌ Kimlik doğrulama anahtarı bulunamadı!")
+    st.info(
+        "💡 **Çözüm:** Google Cloud'dan indirdiğiniz JSON dosyasını proje klasörünüze koyup "
+        "adını **`credentials.json`** yapın veya Streamlit Cloud kullanıyorsanız **Secrets** alanına ekleyin."
+    )
+    st.stop()
 
 # ==========================================
 # 📁 DRIVER / ETABLO SEÇİM ALANI
@@ -34,7 +49,6 @@ else:
 
 st.sidebar.header("⚙️ Ayarlar & Dosya Seçimi")
 
-# Drive üzerindeki tüm erişilebilir Google Sheets listesini alıyoruz
 sheets_data = get_available_spreadsheets(creds_input)
 all_sheets = sheets_data.get("all", {})
 
@@ -46,7 +60,6 @@ if not all_sheets:
     st.warning("⚠️ Hesabınıza tanımlı hiç Google Sheets dosyası bulunamadı.")
     st.stop()
 
-# Dosya adlarını alfabetik sıralıyoruz
 sorted_sheet_names = sorted(list(all_sheets.keys()))
 
 # 1. Kaynak Tablo Seçimi (ENG / POR / ESP / TR Ham Veri Dosyası)
@@ -133,7 +146,6 @@ if st.button("🚀 Raporu Çalıştır", type="primary", use_container_width=Tru
             progress_callback=update_progress
         )
 
-        # İşlemi başlat ve güncellenmiş tabloyu al
         updated_df = worker.process()
 
         if updated_df is not None and not updated_df.empty:
