@@ -196,30 +196,52 @@ elif page == "📅 Aylık Raporlar":
     st.title("📅 Aylık Konsolide Rapor Görünümü")
     st.write("Aylık bazda genel QA performans durum raporları.")
 
-    # Hedef rapor tablosunu doğrudan seçip geçmiş verileri okuma
     sheets_data = get_available_spreadsheets(creds_input)
     filtered_report_sheets = {name: sid for name, sid in sheets_data.get("all", {}).items() if "global perf" in name.lower()}
     
     if filtered_report_sheets:
-        selected_rep = st.selectbox("Özetini Görmek İstediğiniz Ana Dosyayı Seçin:", list(filtered_report_sheets.keys()))
+        selected_rep = st.selectbox("Özetini Görmek İstediğiniz Ana Dosyayı Seçin:", sorted(list(filtered_report_sheets.keys())))
         rep_id = filtered_report_sheets[selected_rep]
         
-        if st.button("📊 Aylık Verileri Getir"):
-            try:
-                import gspread
-                from google.oauth2.service_account import Credentials
-                creds = Credentials.from_service_account_info(creds_input, scopes=["https://www.googleapis.com/auth/spreadsheets"])
-                client = gspread.authorize(creds)
-                wb = client.open_by_key(rep_id)
-                
-                sheet_names = [ws.title for ws in wb.worksheets()]
-                selected_ws_name = st.selectbox("📆 İncelemek İstediğiniz Ay Sekmesini Seçin:", sheet_names)
-                
+        try:
+            creds = Credentials.from_service_account_info(creds_input, scopes=["https://www.googleapis.com/auth/spreadsheets"])
+            client = gspread.authorize(creds)
+            wb = client.open_by_key(rep_id)
+            
+            sheet_names = [ws.title for ws in wb.worksheets()]
+            selected_ws_name = st.selectbox("📆 İncelemek İstediğiniz Ay Sekmesini Seçin:", sheet_names)
+            
+            if st.button("📊 Aylık Verileri Getir", type="primary"):
                 ws = wb.worksheet(selected_ws_name)
                 monthly_data = ws.get_all_values()
-                if monthly_data:
-                    m_df = pd.DataFrame(monthly_data[1:], columns=monthly_data[0])
+                
+                if monthly_data and len(monthly_data) > 0:
+                    # HATA DÜZELTME: Tekrarlayan ve boş sütun isimlerini otomatik düzeltme
+                    raw_headers = monthly_data[0]
+                    cleaned_headers = []
+                    seen_headers = {}
+                    
+                    for idx, h in enumerate(raw_headers):
+                        h_str = str(h).strip()
+                        if not h_str:
+                            h_str = f"Sütun_{idx+1}"
+                        
+                        if h_str in seen_headers:
+                            seen_headers[h_str] += 1
+                            h_str = f"{h_str}_{seen_headers[h_str]}"
+                        else:
+                            seen_headers[h_str] = 0
+                        cleaned_headers.append(h_str)
+
+                    # DataFrame Oluşturma
+                    if len(monthly_data) > 1:
+                        m_df = pd.DataFrame(monthly_data[1:], columns=cleaned_headers)
+                    else:
+                        m_df = pd.DataFrame(columns=cleaned_headers)
+                        
                     st.subheader(f"📑 {selected_ws_name} Sekmesi Performans Tablosu")
                     st.dataframe(m_df, use_container_width=True)
-            except Exception as e:
-                st.error(f"❌ Rapor okuma hatası: {e}")
+                else:
+                    st.warning("⚠️ Seçilen sekme boş!")
+        except Exception as e:
+            st.error(f"❌ Rapor okuma hatası: {e}")
