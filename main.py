@@ -2,6 +2,7 @@ import os
 import json
 import base64
 import time
+from datetime import datetime
 import streamlit as st
 from backend import QAReportWorker, get_available_spreadsheets
 
@@ -23,13 +24,29 @@ if "authenticated" not in st.session_state:
 if "login_time" not in st.session_state:
     st.session_state["login_time"] = None
 
+if "login_date" not in st.session_state:
+    st.session_state["login_date"] = None
+
 def check_session_timeout():
-    """1 saatlik zaman aşımını kontrol eder."""
+    """1 saatlik ve Gece Yarısı (00:00) otomatik oturum kapatma kontrolü."""
     if st.session_state["authenticated"] and st.session_state["login_time"] is not None:
-        elapsed = time.time() - st.session_state["login_time"]
+        now = time.time()
+        current_date = datetime.now().date()
+        
+        # 1. Kontrol: Her gece saat 00:00 sonrası (gün değiştiğinde) otomatik çıkış
+        if st.session_state["login_date"] is not None and current_date != st.session_state["login_date"]:
+            st.session_state["authenticated"] = False
+            st.session_state["login_time"] = None
+            st.session_state["login_date"] = None
+            st.warning("⚠️ Gece yarısı (00:00) olduğu için oturumunuz otomatik kapatıldı.")
+            return
+
+        # 2. Kontrol: 1 Saatlik (3600 sn) zaman aşımı kontrolü
+        elapsed = now - st.session_state["login_time"]
         if elapsed > ONE_HOUR_SECONDS:
             st.session_state["authenticated"] = False
             st.session_state["login_time"] = None
+            st.session_state["login_date"] = None
             st.warning("⚠️ Oturum süreniz (1 saat) dolduğu için kilit ekranına yönlendirildiniz.")
 
 check_session_timeout()
@@ -74,7 +91,7 @@ def login_screen():
                 transform: translate(-50%, -50%);
                 width: 360px;
                 height: 180px;
-                background-image: url('{zula_logo_url}');
+                background-image: url('https://tr.wikipedia.org/wiki/Dosya:Zula_New_LOGO_VECTOR.png');
                 background-size: contain;
                 background-repeat: no-repeat;
                 background-position: center;
@@ -161,16 +178,18 @@ def login_screen():
             if password_input == admin_pass:
                 st.session_state["authenticated"] = True
                 st.session_state["login_time"] = time.time()
+                st.session_state["login_date"] = datetime.now().date()
                 st.rerun()
             else:
                 st.error("❌ Hatalı Şifre! Lütfen tekrar deneyin.")
 
-    st.markdown('<div class="footer-text">🔒 Oturum süresi: <strong>1 Saat</strong></div>', unsafe_allow_html=True)
+    st.markdown('<div class="footer-text">🔒 Oturum süresi: <strong>1 Saat / Gece 00:00 Çıkışlı</strong></div>', unsafe_allow_html=True)
 
 # Oturum Doğrulama Kontrolü
 if not st.session_state.get("authenticated", False) or st.session_state.get("login_time") is None:
     st.session_state["authenticated"] = False
     st.session_state["login_time"] = None
+    st.session_state["login_date"] = None
     login_screen()
     st.stop()
 
@@ -185,7 +204,7 @@ with col_title:
     if login_time is not None:
         elapsed_time = time.time() - login_time
         remaining_min = max(0, int((ONE_HOUR_SECONDS - elapsed_time) / 60))
-        st.caption(f"⏱️ Oturum Süresi: Kalan ~**{remaining_min} dakika**")
+        st.caption(f"⏱️ Oturum Süresi: Kalan ~**{remaining_min} dakika** (Her gece 00:00'da sıfırlanır)")
     else:
         st.caption("⏱️ Oturum Süresi: Belirtilmedi")
 
@@ -193,10 +212,11 @@ with col_logout:
     if st.button("🚪 Çıkış Yap"):
         st.session_state["authenticated"] = False
         st.session_state["login_time"] = None
+        st.session_state["login_date"] = None
         st.rerun()
 
-st.title(" Global Akademi Puanlama Paneli")
-st.caption("İletişim Adresi: zula.akademi@madbyegames.com")
+st.title("📊 Zula Global Akademi Puanlama Sistemi")
+st.caption("Google Sheets verilerini seçilen Ay ve Yıl'a göre eşleştirin ve güncelleyin.")
 
 # --- GOOGLE CREDENTIALS YÖNETİMİ ---
 @st.cache_resource
