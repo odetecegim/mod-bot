@@ -54,6 +54,7 @@ check_session_timeout()
 
 # ==========================================
 # ==========================================
+# ==========================================
 # 🔑 SADECE ŞİFRE İLE GİRİŞ EKRANI
 # ==========================================
 
@@ -102,9 +103,9 @@ def login_screen():
                 margin-bottom: 1.2rem;
             }
             .brand-logo-img {
-                max-width: 220px;
+                max-width: 240px;
                 height: auto;
-                filter: drop-shadow(0px 0px 12px rgba(245, 158, 11, 0.4));
+                filter: drop-shadow(0px 0px 15px rgba(245, 158, 11, 0.4));
             }
             .brand-logo-title {
                 text-align: center;
@@ -125,10 +126,10 @@ def login_screen():
         st.write("")
         st.write("")
         
-        # --- EKLENEN LOGO VE BAŞLIK BÖLÜMÜ ---
+        # --- DOĞRUDAN WEBP LOGO VE BAŞLIK BÖLÜMÜ ---
         st.markdown('''
             <div class="brand-logo-container">
-                <img src="https://resmim.net/i/EYU08h" class="brand-logo-img" alt="Zula QA Logo">
+                <img src="https://resmim.net/cdn/2026/08/05/EYU08h.webp" class="brand-logo-img" alt="Zula QA Logo">
             </div>
             <div class="brand-logo-title">⚡ ZULA QA ⚡</div>
         ''', unsafe_allow_html=True)
