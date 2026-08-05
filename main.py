@@ -14,7 +14,7 @@ LOG_SHEET_NAME = "ModBot.log"
 
 # Sayfa Yapılandırması
 st.set_page_config(
-    page_title="QA Control Center — Yönetim Paneli",
+    page_title="Zula Raporlama Paneli",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -216,7 +216,7 @@ def login_screen():
         st.write("")
         
         # Kesintisiz ZULA Tasarımlı Logo
-        st.markdown('<div class="brand-logo-title">⚡ ZULA QA ⚡</div>', unsafe_allow_html=True)
+        st.markdown('<div class="brand-logo-title">⚡ZULA OYUN⚡</div>', unsafe_allow_html=True)
 
         with st.form("login_form"):
             password_input = st.text_input("GİRİŞ ŞİFRESİ", type="password", placeholder="••••••••••••")
