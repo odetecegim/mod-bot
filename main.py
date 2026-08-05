@@ -312,7 +312,7 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
             df_filtered = df.copy()
 
         # ------------------------------------------------------------------
-        # 🧮 FORMÜL VE DİNAMİK HESAPLAMA MANTIĞI (DİĞER/KANAAT DAHİL)
+        # 🧮 FORMÜL VE DİNAMİK HESAPLAMA MANTIĞI (SİLME/TEMİZLEME DESTEKLİ)
         # ------------------------------------------------------------------
         score_cols = [
             "Zula Pass", "0 Kul. TESTİ", "Genel Check", "Hata bildirimi", 
@@ -322,13 +322,18 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
         # DataFrame içinde var olan ilgili performans sütunlarını tespit et
         valid_score_cols = [c for c in df_filtered.columns if any(sc.lower() in str(c).lower() for sc in score_cols)]
 
-        # Sayısal veri dönüşümü yap
+        # Temiz ve sayısal geçici bir DataFrame oluştur (Silinen hücreler anında 0 kabul edilir)
+        calc_df = pd.DataFrame()
         for col in valid_score_cols:
-            df_filtered[col] = pd.to_numeric(df_filtered[col], errors='coerce').fillna(0)
+            # Boş metinler, NaN, None veya silinen değerler otomatik olarak 0 yapılır
+            calc_df[col] = pd.to_numeric(
+                df_filtered[col].astype(str).str.replace(',', '.').str.strip(), 
+                errors='coerce'
+            ).fillna(0)
 
-        # Toplam Sütununu Hesapla (Diğer/Kanaat dahil)
-        if valid_score_cols:
-            df_filtered["Toplam"] = df_filtered[valid_score_cols].sum(axis=1)
+        # Toplam Sütununu Hesapla
+        if not calc_df.empty:
+            df_filtered["Toplam"] = calc_df.sum(axis=1).astype(int)
 
         # ZA Sütununu Hesapla (Toplam * 500)
         df_filtered["ZA"] = df_filtered["Toplam"] * 500
@@ -343,6 +348,7 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
             disabled=["Toplam", "ZA"]
         )
         
+        # Son güncel tabloyu session'a kaydet
         st.session_state["last_processed_df"] = edited_genel_df
 
         st.markdown("---")
@@ -445,7 +451,6 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
                 append_log_to_modbot_sheet("İNDİRME", "Genel Performans CSV indirildi.")
     else:
         st.info("ℹ️ Henüz işlenmiş bir veri yok. Lütfen önce 'Rapor Çalıştır' sayfasından işlemi başlatın.")
-
 # ==========================================
 # PAGE 3: AYLIK RAPORLAR
 # ==========================================
