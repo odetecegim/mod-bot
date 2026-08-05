@@ -43,12 +43,11 @@ if hasattr(st, "secrets") and len(st.secrets) > 0:
             break
 
 # ==========================================
-# 📜 GOOGLE SHEETS 'ModBot.log' SEKMESİNE OTURUM SAHİBİ ADIYLA LOG YAZMA
+# 📜 GOOGLE SHEETS 'ModBot.log' SEKMESİNE LOG YAZMA
 # ==========================================
 def append_log_to_modbot_sheet(action_type, details, user_name=None):
     """
     Log verilerini aktif oturumu açan kullanıcının adıyla 'ModBot.log' sekmesine yazar.
-    user_name verilmezse direkt st.session_state['current_user'] değerini otomatik alır.
     """
     try:
         active_user = user_name or st.session_state.get("current_user") or "Bilinmeyen Kullanıcı"
@@ -197,20 +196,44 @@ if not st.session_state.get("authenticated", False):
     st.stop()
 
 # ==========================================
-# 📌 CANLI TABLO DÜZENLEME TAKİP FONKSİYONLARI
+# 📌 CANLI TABLO DÜZENLEME VE GOOGLE SHEETS EŞ ZAMANLI GÜNCELLEME
 # ==========================================
 def track_genel_editor_changes():
+    """
+    Streamlit tablosunda yapılan değişiklikleri anında Google Sheets ana tablosunda günceller.
+    """
     state = st.session_state.get("genel_performans_editor")
-    if state:
+    if not state:
+        return
+
+    report_id = st.session_state.get("active_report_id")
+    if not report_id:
+        return
+
+    try:
+        if isinstance(creds_input, dict):
+            client = gspread.service_account_from_dict(creds_input)
+        else:
+            client = gspread.service_account(filename=creds_input)
+        
+        wb = client.open_by_key(report_id)
+        ws = wb.active
+
         if state.get("edited_rows"):
             for row_idx, changes in state["edited_rows"].items():
-                append_log_to_modbot_sheet("GENEL TABLO - HÜCRE GÜNCELLEME", f"Satır {row_idx}: {changes}")
-        if state.get("added_rows"):
-            for row_data in state["added_rows"]:
-                append_log_to_modbot_sheet("GENEL TABLO - YENİ SATIR EKLEME", f"Eklenen: {row_data}")
-        if state.get("deleted_rows"):
-            for row_idx in state["deleted_rows"]:
-                append_log_to_modbot_sheet("GENEL TABLO - SATIR SİLME", f"Silinen Satır: {row_idx}")
+                df_curr = st.session_state.get("last_processed_df")
+                if df_curr is not None and row_idx < len(df_curr):
+                    gs_row = row_idx + 2 # Google Sheets başlık farkı (+2)
+                    
+                    for col_name, new_val in changes.items():
+                        if col_name in df_curr.columns:
+                            col_idx = df_curr.columns.get_loc(col_name) + 1
+                            ws.update_cell(gs_row, col_idx, new_val if new_val is not None else "")
+                            
+                append_log_to_modbot_sheet("EŞ ZAMANLI CANLI GÜNCELLEME", f"Satır {row_idx+1} -> Değişiklikler: {changes}")
+
+    except Exception as e:
+        print(f"Eş zamanlı Google Sheets güncelleme hatası: {e}")
 
 def track_loader_editor_changes():
     state = st.session_state.get("za_loader_editor")
@@ -303,7 +326,7 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
     
     df = st.session_state.get("last_processed_df", None)
     if df is not None and not df.empty:
-        st.subheader("📋 Genel Performans Tablosu (Düzenlenebilir)")
+        st.subheader("📋 Genel Performans Tablosu (Düzenlenebilir & Eş Zamanlı)")
         
         search_query = st.text_input("🔍 Personel / Nick Arama:", "")
         if search_query:
@@ -311,35 +334,8 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
         else:
             df_filtered = df.copy()
 
-        # ------------------------------------------------------------------
-        # 🧮 FORMÜL VE DİNAMİK HESAPLAMA MANTIĞI (SİLME/TEMİZLEME DESTEKLİ)
-        # ------------------------------------------------------------------
-        score_cols = [
-            "Zula Pass", "0 Kul. TESTİ", "Genel Check", "Hata bildirimi", 
-            "Öneri Bildirimi", "Discord PC", "Hakemlik", "Diğer/Kanaat"
-        ]
-        
-        # DataFrame içinde var olan ilgili performans sütunlarını tespit et
-        valid_score_cols = [c for c in df_filtered.columns if any(sc.lower() in str(c).lower() for sc in score_cols)]
-
-        # Temiz ve sayısal geçici bir DataFrame oluştur (Silinen hücreler anında 0 kabul edilir)
-        calc_df = pd.DataFrame()
-        for col in valid_score_cols:
-            # Boş metinler, NaN, None veya silinen değerler otomatik olarak 0 yapılır
-            calc_df[col] = pd.to_numeric(
-                df_filtered[col].astype(str).str.replace(',', '.').str.strip(), 
-                errors='coerce'
-            ).fillna(0)
-
-        # Toplam Sütununu Hesapla
-        if not calc_df.empty:
-            df_filtered["Toplam"] = calc_df.sum(axis=1).astype(int)
-
-        # ZA Sütununu Hesapla (Toplam * 500)
-        df_filtered["ZA"] = df_filtered["Toplam"] * 500
-        # ------------------------------------------------------------------
-
-        edited_genel_df = st.data_editor(
+        # 1. Kullanıcıdan canlı veriyi düzenlemesini al
+        edited_raw_df = st.data_editor(
             df_filtered,
             num_rows="dynamic",
             use_container_width=True,
@@ -347,9 +343,36 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
             on_change=track_genel_editor_changes,
             disabled=["Toplam", "ZA"]
         )
+
+        # ------------------------------------------------------------------
+        # 🧮 CANLI FORMÜL VE SİLME/TEMİZLEME HESAPLAMA MANTIĞI
+        # ------------------------------------------------------------------
+        edited_genel_df = edited_raw_df.copy()
         
-        # Son güncel tabloyu session'a kaydet
+        score_cols = [
+            "Zula Pass", "0 Kul. TESTİ", "Genel Check", "Hata bildirimi", 
+            "Öneri Bildirimi", "Discord PC", "Hakemlik", "Diğer/Kanaat"
+        ]
+        
+        # DataFrame içinde var olan ilgili tüm puan sütunlarını bul
+        valid_score_cols = [c for c in edited_genel_df.columns if any(sc.lower() in str(c).lower() for sc in score_cols)]
+
+        # Silinen / Boş bırakılan hücreler anında 0 kabul edilir
+        calc_df = pd.DataFrame()
+        for col in valid_score_cols:
+            calc_df[col] = pd.to_numeric(
+                edited_genel_df[col].astype(str).str.replace(',', '.').str.strip(), 
+                errors='coerce'
+            ).fillna(0)
+
+        # Toplam ve ZA Sütunlarını ANINDA yeniden hesapla
+        if not calc_df.empty:
+            edited_genel_df["Toplam"] = calc_df.sum(axis=1).astype(int)
+            edited_genel_df["ZA"] = edited_genel_df["Toplam"] * 500
+
+        # Hesaplanmış güncel hali session_state üzerinde sakla
         st.session_state["last_processed_df"] = edited_genel_df
+        # ------------------------------------------------------------------
 
         st.markdown("---")
         
@@ -451,6 +474,7 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
                 append_log_to_modbot_sheet("İNDİRME", "Genel Performans CSV indirildi.")
     else:
         st.info("ℹ️ Henüz işlenmiş bir veri yok. Lütfen önce 'Rapor Çalıştır' sayfasından işlemi başlatın.")
+
 # ==========================================
 # PAGE 3: AYLIK RAPORLAR
 # ==========================================
