@@ -101,7 +101,7 @@ def login_screen():
                 margin-bottom: 1rem;
             }
             .brand-logo-img {
-                max-width: 70px;
+                max-width: 10px;
                 height: auto;
                 filter: drop-shadow(0px 0px 8px rgba(245, 158, 11, 0.4));
             }
