@@ -63,7 +63,7 @@ creds_input = get_credentials()
 
 # --- GOOGLE SHEETS "ModBot.log" DOSYASINA LOG YAZMA ---
 def append_log_to_google_sheet(creds, status, details):
-    """Log kayıtlarını ModBot.log Google Sheet dosyasına işler."""
+    """Log kayıtlarını ModBot.log Google Sheet dosyasına sütun sütun işler."""
     try:
         if isinstance(creds, str):
             gc = gspread.service_account(filename=creds)
@@ -77,24 +77,49 @@ def append_log_to_google_sheet(creds, status, details):
             sh = gc.create(LOG_SHEET_NAME)
             ws = sh.sheet1
             # Başlık satırını ekle
-            ws.append_row(["Tarih / Saat", "İşlemi Yapan Kullanıcı", "Kaynak Tablo", "Rapor Tablosu", "Ay", "Yıl", "Durum", "Hata Detayı"])
+            ws.append_row([
+                "Tarih / Saat", 
+                "İşlemi Yapan Kullanıcı", 
+                "Kaynak Tablo", 
+                "Rapor Tablosu", 
+                "Ay", 
+                "Yıl", 
+                "Durum", 
+                "Hata Detayı"
+            ])
 
         ws = sh.sheet1
+
+        # Eğer sayfa boşsa başlıkları ekle
+        if len(ws.get_all_values()) == 0:
+            ws.append_row([
+                "Tarih / Saat", 
+                "İşlemi Yapan Kullanıcı", 
+                "Kaynak Tablo", 
+                "Rapor Tablosu", 
+                "Ay", 
+                "Yıl", 
+                "Durum", 
+                "Hata Detayı"
+            ])
+
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        user = st.session_state.get("current_user", "Bilinmeyen Kullanıcı")
-        error_msg = details.get("error", "")
+        user = details.get("user") or st.session_state.get("current_user", "Bilinmeyen Kullanıcı")
+        error_msg = str(details.get("error", ""))
 
         row = [
             timestamp,
             user,
-            details.get("source", "-"),
-            details.get("report", "-"),
-            details.get("month", "-"),
-            details.get("year", "-"),
+            str(details.get("source", "-")),
+            str(details.get("report", "-")),
+            str(details.get("month", "-")),
+            str(details.get("year", "-")),
             status,
             error_msg
         ]
-        ws.append_row(row)
+        
+        # Sütun bazlı tam satır olarak ekle
+        ws.append_row(row, value_input_option="USER_ENTERED")
     except Exception as e:
         print(f"Google Sheet Log Yazma Hatası: {e}")
 
