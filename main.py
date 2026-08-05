@@ -284,12 +284,12 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
             df_display,
             num_rows="dynamic",
             use_container_width=True,
-            key="genel_performans_editor_v3",
+            key="genel_performans_editor_v4",
             disabled=["Toplam", "ZA"]
         )
 
         # ------------------------------------------------------------------
-        # 🧮 ANLIK REAKTİF FORMÜL HESAPLAMA (GİRİLEN SON DEĞERİ ANINDA İŞLER)
+        # 🧮 ANLIK REAKTİF FORMÜL HESAPLAMA
         # ------------------------------------------------------------------
         score_cols = [
             "Zula Pass", "0 Kul. TESTİ", "Genel Check", "Hata bildirimi", 
@@ -298,19 +298,16 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
         
         valid_score_cols = [c for c in edited_raw_df.columns if any(sc.lower() in str(c).lower() for sc in score_cols)]
 
-        # Tablodan gelen verileri temizle, sayı yap (Silinirse veya geçersizse 0 yap)
         for col in valid_score_cols:
             edited_raw_df[col] = pd.to_numeric(
                 edited_raw_df[col].astype(str).str.replace(',', '.').str.strip(), 
                 errors='coerce'
             ).fillna(0)
 
-        # Toplam ve ZA sütunlarını ANINDA canlı hesapla
         if valid_score_cols:
             edited_raw_df["Toplam"] = edited_raw_df[valid_score_cols].sum(axis=1).astype(int)
             edited_raw_df["ZA"] = edited_raw_df["Toplam"] * 500
 
-        # Kullanıcı/Nick bazlı eşleştirip st.session_state verisini ezilmeden güncelle
         id_col = None
         for col in ["Nick", "Personel", "Kullanıcı", "Ad Soyad"]:
             if col in df_base.columns:
@@ -327,7 +324,7 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
             st.session_state["last_processed_df"] = edited_raw_df.copy()
 
         # ------------------------------------------------------------------
-        # 💾 GOOGLE SHEETS & MODBOT.LOG SENKRONİZASYON BUTONU
+        # 💾 GOOGLE SHEETS & MODBOT.LOG SENKRONİZASYON BUTONU (OTO YENİLEMELİ)
         # ------------------------------------------------------------------
         st.write("")
         col_save, _ = st.columns([1, 2])
@@ -355,7 +352,6 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
                         wb = client.open_by_key(rep_id)
                         ws = wb.active
                         
-                        # Güncel hafızadaki veriyi Google Sheets'e aktar
                         updated_df_to_save = st.session_state["last_processed_df"]
                         data_to_write = [updated_df_to_save.columns.tolist()] + updated_df_to_save.astype(str).values.tolist()
                         
@@ -366,13 +362,15 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
                             "KANAAT/PUAN GÜNCELLEME", 
                             f"Toplam {len(updated_df_to_save)} personelin puan ve kanaat verileri kaydedildi."
                         )
-                        st.success("✅ Tüm Kanaat puanları ve yeni hesaplamalar Google Sheets'e başarıyla kaydedildi!")
+                        st.toast("✅ Google Sheets ve ModBot.log güncellendi!", icon="🎉")
+                        time.sleep(1)
+                        st.rerun()  # Otomatik yenileme
                     except Exception as e:
                         st.error(f"❌ Google Sheets kaydetme hatası: {e}")
 
         st.markdown("---")
         
-        # ⚡ İŞLE BUTONU (AY TABLOSUNA AKTAR)
+        # ⚡ İŞLE BUTONU (AY TABLOSUNA AKTAR - OTO YENİLEMELİ)
         st.subheader("⚡ ZA Miktarlarını Ay Tablosuna Aktar & Son Miktarı Hesapla")
         
         col_month_sel, col_btn = st.columns([2, 1])
@@ -421,6 +419,8 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
                     if success:
                         st.balloons()
                         st.success(f"🎉 ZA verileri [{target_month_to_process}] sütununa işlendi!")
+                        time.sleep(1.5)
+                        st.rerun()  # Otomatik yenileme
                 except gspread.exceptions.SpreadsheetNotFound:
                     st.error(f"❌ Google Sheets Dosyası Bulunamadı! Lütfen Service Account e-postanıza bu tablo için 'Düzenleyen' yetkisi verdiğinizden emin olun.")
                 except Exception as e:
@@ -455,7 +455,7 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
             df_editable,
             num_rows="dynamic",
             use_container_width=True,
-            key="za_loader_editor_v3"
+            key="za_loader_editor_v4"
         )
 
         col_dl1, col_dl2 = st.columns(2)
