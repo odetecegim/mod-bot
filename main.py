@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import time
+import os
+import logging
 from datetime import datetime
 from google.oauth2.service_account import Credentials
 import gspread
@@ -16,6 +18,27 @@ st.set_page_config(
     page_icon="📊",
     layout="wide"
 )
+
+# ==========================================
+# 📜 LOG DOSYASI ALTYAPISI VE AYARLARI
+# ==========================================
+LOG_DIR = "logs"
+if not os.path.exists(LOG_DIR):
+    os.makedirs(LOG_DIR)
+
+log_filename = os.path.join(LOG_DIR, "loader_changes.log")
+logging.basicConfig(
+    filename=log_filename,
+    level=logging.INFO,
+    format="%(asctime)s - [%(levelname)s] - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    encoding="utf-8"
+)
+
+def log_change_to_file(action_type, user_name, details):
+    """Yapılan düzenleme ve değişiklikleri log dosyasına kaydeder."""
+    log_msg = f"Kullanıcı: '{user_name}' | Eylem: {action_type} | Detay: {details}"
+    logging.info(log_msg)
 
 ONE_HOUR_SECONDS = 3600
 
@@ -53,7 +76,7 @@ def check_session_timeout():
 check_session_timeout()
 
 # ==========================================
-# 🔑 GİRİŞ EKRANI (KÜÇÜLTÜLMÜŞ LOGO)
+# 🔑 GİRİŞ EKRANI
 # ==========================================
 def login_screen():
     st.markdown("""
@@ -137,6 +160,7 @@ def login_screen():
                     st.session_state["current_user"] = found_user
                     st.session_state["login_time"] = time.time()
                     st.session_state["login_date"] = datetime.now().date()
+                    log_change_to_file("GİRİŞ", found_user, "Sisteme başarıyla giriş yapıldı.")
                     st.rerun()
                 else:
                     st.error("❌ Hatalı veya Geçersiz Şifre!")
@@ -148,13 +172,48 @@ if not st.session_state.get("authenticated", False):
     st.stop()
 
 # ==========================================
+# 📌 DÜZENLEME DETAYLARINI CATCH EDEN CALLBACK FONKSİYONLARI
+# ==========================================
+def track_genel_editor_changes():
+    state = st.session_state.get("genel_performans_editor")
+    user = st.session_state.get("current_user", "Bilinmeyen")
+    if state:
+        # 1. Hücre güncellemeleri
+        if state.get("edited_rows"):
+            for row_idx, changes in state["edited_rows"].items():
+                log_change_to_file("GENEL TABLO - HÜCRE GÜNCELLEME", user, f"Satır İndeksi: {row_idx} -> Değişen Kolonlar & Değerler: {changes}")
+        # 2. Yeni satır ekleme
+        if state.get("added_rows"):
+            for row_data in state["added_rows"]:
+                log_change_to_file("GENEL TABLO - YENİ SATIR EKLEME", user, f"Eklenen Veri: {row_data}")
+        # 3. Satır silme
+        if state.get("deleted_rows"):
+            for row_idx in state["deleted_rows"]:
+                log_change_to_file("GENEL TABLO - SATIR SİLME", user, f"Silinen Satır İndeksi: {row_idx}")
+
+def track_loader_editor_changes():
+    state = st.session_state.get("za_loader_editor")
+    user = st.session_state.get("current_user", "Bilinmeyen")
+    if state:
+        if state.get("edited_rows"):
+            for row_idx, changes in state["edited_rows"].items():
+                log_change_to_file("YÜKLEYİCİ LİSTESİ - HÜCRE GÜNCELLEME", user, f"Satır İndeksi: {row_idx} -> Değişenler: {changes}")
+        if state.get("added_rows"):
+            for row_data in state["added_rows"]:
+                log_change_to_file("YÜKLEYİCİ LİSTESİ - YENİ KİŞİ/ZA EKLEME", user, f"Eklenen Veri: {row_data}")
+        if state.get("deleted_rows"):
+            for row_idx in state["deleted_rows"]:
+                log_change_to_file("YÜKLEYİCİ LİSTESİ - SATIR SİLME", user, f"Silinen Satır İndeksi: {row_idx}")
+
+# ==========================================
 # 📌 SOL MENÜ & NAVİGASYON
 # ==========================================
 with st.sidebar:
     st.write(f"👤 **Kullanıcı:** {st.session_state.get('current_user', 'Bilinmeyen')}")
-    page = st.radio("📌 Navigasyon", ["🚀 Rapor Çalıştır", "📈 Yüklenecek Kişiler & Miktarlar", "📅 Aylık Raporlar"], index=0)
+    page = st.radio("📌 Navigasyon", ["🚀 Rapor Çalıştır", "📈 Yüklenecek Kişiler & Miktarlar", "📅 Aylık Raporlar", "📜 Değişiklik Logları"], index=0)
     
     if st.button("🚪 Çıkış Yap"):
+        log_change_to_file("ÇIKIŞ", st.session_state.get('current_user', 'Bilinmeyen'), "Çıkış yapıldı.")
         st.session_state["authenticated"] = False
         st.rerun()
 
@@ -202,6 +261,7 @@ if page == "🚀 Rapor Çalıştır":
     progress_bar = st.progress(0)
 
     if st.button("🚀 Raporu Çalıştır", type="primary", use_container_width=True):
+        log_change_to_file("RAPOR ÇALIŞTIRILDI", st.session_state.get('current_user'), f"Kaynak: {selected_source_name}, Hedef: {selected_report_name}, Dönem: {selected_month} {selected_year}")
         worker = QAReportWorker(
             creds_input=creds_input,
             source_id=source_id,
@@ -216,27 +276,37 @@ if page == "🚀 Rapor Çalıştır":
             st.session_state["last_processed_df"] = updated_df
             st.session_state["active_report_id"] = report_id
             st.session_state["selected_month"] = selected_month
-            st.success("🎉 Veriler başarıyla işlendi! 'Yüklenecek Kişiler' sekmesinden performans tablosuna göz atabilirsiniz.")
+            st.success("🎉 Veriler başarıyla işlendi!")
         else:
             st.error("❌ Veri bulunamadı veya aktarım başarısız.")
 
 # ==========================================
-# PAGE 2: PERFORMANS & YÜKLEYİCİ LİSTESİ
+# PAGE 2: PERFORMANS & LOGLANAN YÜKLEYİCİ LİSTESİ
 # ==========================================
 elif page == "📈 Yüklenecek Kişiler & Miktarlar":
     st.title("📈 Yüklenecek Kişiler ve Puan/Miktar Tablosu")
     
     df = st.session_state.get("last_processed_df", None)
     if df is not None and not df.empty:
-        st.subheader("📋 Genel Performans Tablosu")
+        st.subheader("📋 Genel Performans Tablosu (Düzenlenebilir & Loglanır)")
+        st.info("💡 **Canlı Takip:** Tabloda yapılan her değişiklik kullanıcı adı ve tarih bilgisiyle log dosyasına yazılır.")
         
         search_query = st.text_input("🔍 Personel / Nick Arama:", "")
         if search_query:
-            df_filtered = df[df.apply(lambda row: row.astype(str).str.contains(search_query, case=False).any(), axis=1)]
+            df_filtered = df[df.apply(lambda row: row.astype(str).str.contains(search_query, case=False).any(), axis=1)].copy()
         else:
-            df_filtered = df
+            df_filtered = df.copy()
 
-        st.dataframe(df_filtered, use_container_width=True)
+        # ✏️ DÜZENLEME CALLBACK MEKANİZMASI İLE GENEL TABLO
+        edited_genel_df = st.data_editor(
+            df_filtered,
+            num_rows="dynamic",
+            use_container_width=True,
+            key="genel_performans_editor",
+            on_change=track_genel_editor_changes
+        )
+        
+        st.session_state["last_processed_df"] = edited_genel_df
 
         st.markdown("---")
         
@@ -257,7 +327,8 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
             process_btn = st.button("⚡ ZA Miktarlarını İşle", type="primary", use_container_width=True)
 
         if process_btn:
-            with st.spinner("ZA verileri işleniyor ve toplam miktar hesaplanıyor..."):
+            log_change_to_file("ZA MİKTARLARI İŞLENDİ", st.session_state.get('current_user'), f"Hedef Ay: {target_month_to_process}")
+            with st.spinner("ZA verileri işleniyor..."):
                 sheets_data = get_available_spreadsheets(creds_input)
                 filtered_report_sheets = {name: sid for name, sid in sheets_data.get("all", {}).items() if "global perf" in name.lower()}
                 
@@ -279,54 +350,77 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
                         
                     if success:
                         st.balloons()
-                        st.success(f"🎉 ZA verileri [{target_month_to_process}] sütununa işlendi ve Yükleyici Son Miktarları toplandı!")
+                        st.success(f"🎉 ZA verileri [{target_month_to_process}] sütununa işlendi!")
 
         st.markdown("---")
         
-        # 🎁 YÜKLEYİCİ İÇİN DİREKT KULLANIM ALANI
-        st.subheader("🚀 Yükleyici İçin Temiz Liste (Direkt Buradan Alacak)")
-        st.info("💡 Yüklemeyi yapacak personel sadece bu tabloyu kullanacak. (Puanı 0 olan kişiler otomatik elenmiştir)")
+        # 🎁 YÜKLEYİCİ DÜZENLEME & LOG TABLOSU
+        st.subheader("🚀 Yükleyici İçin Temiz Liste (Düzenlenebilir & Loglanır)")
         
-        # Kullanıcı Adı ve ZA sütunlarını filtreleme
-        cols = df.columns.tolist()
+        cols = edited_genel_df.columns.tolist()
         user_col = cols[1] if len(cols) > 1 else cols[0]
         
-        # ZA veya Son Miktar sütunu bulma
         za_col = None
         for c in cols:
-            if any(k in c.upper() for k in ["ZA", "TOPLAM", "YÜKLENECEK", "MİKTAR"]):
+            c_clean = str(c).strip().upper()
+            if c_clean == "ZA" or "ZA MİKTAR" in c_clean or "YÜKLENECEK ZA" in c_clean:
                 za_col = c
                 break
         
         if not za_col:
+            for c in cols:
+                if "ZA" in str(c).upper():
+                    za_col = c
+                    break
+        if not za_col:
             za_col = cols[-1]
 
-        df_loader = df[[user_col, za_col]].copy()
-        df_loader.columns = ["Kullanıcı / Personel", "Yüklenecek Son ZA Miktarı"]
+        df_loader_base = edited_genel_df[[user_col, za_col]].copy()
+        df_loader_base.columns = ["Kullanıcı / Personel", "Yüklenecek Son ZA Miktarı"]
         
-        # 0 veya Boş olanları ele
-        df_loader = df_loader[df_loader["Yüklenecek Son ZA Miktarı"].astype(str).str.strip().str.isdigit()]
-        df_loader = df_loader[df_loader["Yüklenecek Son ZA Miktarı"].astype(int) > 0]
+        def clean_za_val(val):
+            if pd.isna(val):
+                return 0
+            val_str = str(val).strip().replace('.', '').replace(',', '')
+            if val_str.isdigit():
+                return int(val_str)
+            return 0
 
-        st.dataframe(df_loader, use_container_width=True)
+        df_loader_base["numeric_za"] = df_loader_base["Yüklenecek Son ZA Miktarı"].apply(clean_za_val)
+        df_loader_base = df_loader_base[df_loader_base["numeric_za"] > 0]
+        df_editable = df_loader_base[["Kullanıcı / Personel", "Yüklenecek Son ZA Miktarı"]].reset_index(drop=True)
+
+        # ✏️ DÜZENLEME LOGLANAN TABLO
+        edited_loader_df = st.data_editor(
+            df_editable,
+            num_rows="dynamic",
+            use_container_width=True,
+            key="za_loader_editor",
+            on_change=track_loader_editor_changes
+        )
 
         col_dl1, col_dl2 = st.columns(2)
         with col_dl1:
-            csv_loader = df_loader.to_csv(index=False, sep="\t").encode('utf-8')
-            st.download_button(
-                label="📋 Yükleyici Listesini (Excel / Tab Kopyalanabilir) İndir",
-                data=csv_loader,
-                file_name=f"yukleyici_direkt_liste_{datetime.now().strftime('%Y%m%d')}.txt",
-                mime="text/plain"
-            )
+            csv_edited = edited_loader_df.to_csv(index=False, sep="\t").encode('utf-8')
+            if st.download_button(
+                label="📋 Yükleyici Listesini İndir (Güncel)",
+                data=csv_edited,
+                file_name=f"yukleyici_guncel_liste_{datetime.now().strftime('%Y%m%d')}.txt",
+                mime="text/plain",
+                use_container_width=True
+            ):
+                log_change_to_file("İNDİRME", st.session_state.get('current_user'), "Yükleyici listesi indirildi.")
+
         with col_dl2:
-            csv_full = df.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="📥 Tüm Performans Tablosunu CSV Olarak İndir",
+            csv_full = edited_genel_df.to_csv(index=False).encode('utf-8')
+            if st.download_button(
+                label="📥 Tüm Genel Performans Tablosunu İndir",
                 data=csv_full,
                 file_name=f"qa_tam_tablo_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime="text/csv"
-            )
+                mime="text/csv",
+                use_container_width=True
+            ):
+                log_change_to_file("İNDİRME", st.session_state.get('current_user'), "Tüm Genel Performans Tablosu CSV indirildi.")
     else:
         st.info("ℹ️ Henüz işlenmiş bir veri yok. Lütfen önce 'Rapor Çalıştır' sayfasından işlemi başlatın.")
 
@@ -335,8 +429,7 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
 # ==========================================
 elif page == "📅 Aylık Raporlar":
     st.title("📅 Aylık Konsolide Rapor Görünümü")
-    st.write("Aylık bazda genel QA performans durum raporları.")
-
+    
     sheets_data = get_available_spreadsheets(creds_input)
     filtered_report_sheets = {name: sid for name, sid in sheets_data.get("all", {}).items() if "global perf" in name.lower()}
     
@@ -386,3 +479,25 @@ elif page == "📅 Aylık Raporlar":
                     st.warning("⚠️ Seçilen sekme boş!")
         except Exception as e:
             st.error(f"❌ Rapor okuma hatası: {e}")
+
+# ==========================================
+# PAGE 4: CANLI LOG TAKİP PANELİ
+# ==========================================
+elif page == "📜 Değişiklik Logları":
+    st.title("📜 Kullanıcı Değişiklik & Sistem Logları")
+    st.info("💡 Panel üzerinden yapılan tüm veri düzenlemeleri, yeni satır ekleme/silme işlemleri ve dosya indirmeleri tarih saatiyle burada listelenir.")
+
+    if os.path.exists(log_filename):
+        with open(log_filename, "r", encoding="utf-8") as f:
+            log_content = f.read()
+        
+        st.text_area("📄 `logs/loader_changes.log` Dosya İçeriği", value=log_content, height=450)
+        
+        st.download_button(
+            label="📥 Log Dosyasını İndir (.log)",
+            data=log_content,
+            file_name=f"loader_changes_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log",
+            mime="text/plain"
+        )
+    else:
+        st.warning("⚠️ Henüz kayıtlı bir log bulunamadı.")
