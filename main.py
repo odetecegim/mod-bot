@@ -19,7 +19,7 @@ st.set_page_config(
 
 ONE_HOUR_SECONDS = 3600
 
-# Belirttiğiniz Sabit Google Sheets Log Dosyası ID'si
+# Sabit Google Sheets Log Dosyası ID'si
 TARGET_LOG_SHEET_ID = "1WMyChax15-VD7o-39FYVcA10NDYwi_M_7zpIn0fFJOE"
 
 # ==========================================
@@ -60,7 +60,6 @@ def append_log_to_modbot_sheet(action_type, details, user_name=None):
         else:
             client = gspread.service_account(filename=creds_input)
 
-        # Doğrudan verilen sabit dosyaya bağlanır
         wb = client.open_by_key(TARGET_LOG_SHEET_ID)
 
         try:
@@ -190,85 +189,6 @@ if not st.session_state.get("authenticated", False):
     st.stop()
 
 # ==========================================
-# 📌 CANLI TABLO DÜZENLEME VE GOOGLE SHEETS EŞ ZAMANLI GÜNCELLEME
-# ==========================================
-def track_genel_editor_changes():
-    """
-    Streamlit tablosunda yapılan Kanaat/Puan değişikliklerini anında Google Sheets ana tablosunda günceller.
-    """
-    state = st.session_state.get("genel_performans_editor")
-    if not state:
-        return
-
-    report_id = st.session_state.get("active_report_id") or TARGET_LOG_SHEET_ID
-    df_curr = st.session_state.get("last_processed_df")
-
-    if df_curr is None or df_curr.empty:
-        return
-
-    try:
-        if isinstance(creds_input, dict):
-            client = gspread.service_account_from_dict(creds_input)
-        else:
-            client = gspread.service_account(filename=creds_input)
-        
-        wb = client.open_by_key(report_id)
-        ws = wb.active
-
-        if state.get("edited_rows"):
-            for row_idx, changes in state["edited_rows"].items():
-                if row_idx < len(df_curr):
-                    gs_row = row_idx + 2  # Google Sheets başlık satırı kaydırması (+2)
-                    
-                    for col_name, new_val in changes.items():
-                        if col_name in df_curr.columns:
-                            col_idx = df_curr.columns.get_loc(col_name) + 1
-                            val_to_write = "" if new_val is None else new_val
-                            ws.update_cell(gs_row, col_idx, val_to_write)
-                            
-                            # Kanaat veya puan değiştiğinde "Toplam" ve "ZA" sütunlarını da Google Sheets'te güncelle
-                            score_cols = ["Zula Pass", "0 Kul. TESTİ", "Genel Check", "Hata bildirimi", "Öneri Bildirimi", "Discord PC", "Hakemlik", "Diğer/Kanaat"]
-                            valid_score_cols = [c for c in df_curr.columns if any(sc.lower() in str(c).lower() for sc in score_cols)]
-                            
-                            # Satırdaki yeni toplamı hesapla
-                            row_sum = 0
-                            for sc_col in valid_score_cols:
-                                v = changes.get(sc_col, df_curr.iloc[row_idx][sc_col])
-                                try:
-                                    v_num = float(str(v).replace(',', '.').strip()) if str(v).strip() != '' else 0
-                                except:
-                                    v_num = 0
-                                row_sum += v_num
-                            
-                            row_sum = int(row_sum)
-                            za_val = row_sum * 500
-                            
-                            if "Toplam" in df_curr.columns:
-                                top_col_idx = df_curr.columns.get_loc("Toplam") + 1
-                                ws.update_cell(gs_row, top_col_idx, row_sum)
-                            if "ZA" in df_curr.columns:
-                                za_col_idx = df_curr.columns.get_loc("ZA") + 1
-                                ws.update_cell(gs_row, za_col_idx, za_val)
-
-                    append_log_to_modbot_sheet("CANLI VERİ GÜNCELLEME", f"Satır {row_idx+1} -> Değişiklik: {changes}")
-
-    except Exception as e:
-        print(f"Eş zamanlı Google Sheets güncelleme hatası: {e}")
-
-def track_loader_editor_changes():
-    state = st.session_state.get("za_loader_editor")
-    if state:
-        if state.get("edited_rows"):
-            for row_idx, changes in state["edited_rows"].items():
-                append_log_to_modbot_sheet("YÜKLEYİCİ LİSTESİ - HÜCRE GÜNCELLEME", f"Satır {row_idx}: {changes}")
-        if state.get("added_rows"):
-            for row_data in state["added_rows"]:
-                append_log_to_modbot_sheet("YÜKLEYİCİ LİSTESİ - YENİ EKLEME", f"Eklenen: {row_data}")
-        if state.get("deleted_rows"):
-            for row_idx in state["deleted_rows"]:
-                append_log_to_modbot_sheet("YÜKLEYİCİ LİSTESİ - SATIR SİLME", f"Silinen Satır: {row_idx}")
-
-# ==========================================
 # 📌 SOL MENÜ & NAVİGASYON
 # ==========================================
 with st.sidebar:
@@ -300,6 +220,7 @@ if page == "🚀 Rapor Çalıştır":
     with col_rep:
         selected_report_name = st.selectbox("🎯 Hedef Dosya:", options=sorted(list(filtered_report_sheets.keys())))
         report_id = filtered_report_sheets.get(selected_report_name, TARGET_LOG_SHEET_ID)
+        st.session_state["active_report_id"] = report_id
 
     col_month, col_year = st.columns(2)
     with col_month:
@@ -345,28 +266,30 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
     st.title("📈 Yüklenecek Kişiler ve Puan/Miktar Tablosu")
     
     if "last_processed_df" in st.session_state and st.session_state["last_processed_df"] is not None and not st.session_state["last_processed_df"].empty:
-        df_master = st.session_state["last_processed_df"].copy()
         
-        st.subheader("📋 Genel Performans Tablosu (Canlı Kanaat Düzenleme & Otomatik Hesap)")
+        st.subheader("📋 Genel Performans Tablosu (Canlı Kanaat Düzenleme & Anlık Hesap)")
         
         # 1. Personel / Nick Arama
         search_query = st.text_input("🔍 Personel / Nick Arama:", "")
+        
+        df_base = st.session_state["last_processed_df"].copy()
+        
         if search_query:
-            df_display = df_master[df_master.apply(lambda row: row.astype(str).str.contains(search_query, case=False).any(), axis=1)].copy()
+            df_display = df_base[df_base.apply(lambda row: row.astype(str).str.contains(search_query, case=False).any(), axis=1)].copy()
         else:
-            df_display = df_master.copy()
+            df_display = df_base.copy()
 
-        # 2. Düzenlenebilir Canlı Tablo
+        # 2. Düzenlenebilir Tablo
         edited_raw_df = st.data_editor(
             df_display,
             num_rows="dynamic",
             use_container_width=True,
-            key="genel_performans_editor_v2",
+            key="genel_performans_editor_v3",
             disabled=["Toplam", "ZA"]
         )
 
         # ------------------------------------------------------------------
-        # 🧮 CANLI HESAPLAMA VE DURUM KORUMA MANTIĞI
+        # 🧮 ANLIK REAKTİF FORMÜL HESAPLAMA (GİRİLEN SON DEĞERİ ANINDA İŞLER)
         # ------------------------------------------------------------------
         score_cols = [
             "Zula Pass", "0 Kul. TESTİ", "Genel Check", "Hata bildirimi", 
@@ -375,32 +298,31 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
         
         valid_score_cols = [c for c in edited_raw_df.columns if any(sc.lower() in str(c).lower() for sc in score_cols)]
 
-        # Tablodan gelen verileri temizle ve sayıya dönüştür (Silinirse 0 yap)
+        # Tablodan gelen verileri temizle, sayı yap (Silinirse veya geçersizse 0 yap)
         for col in valid_score_cols:
             edited_raw_df[col] = pd.to_numeric(
                 edited_raw_df[col].astype(str).str.replace(',', '.').str.strip(), 
                 errors='coerce'
             ).fillna(0)
 
-        # Toplam ve ZA sütunlarını ANINDA yeniden hesapla
+        # Toplam ve ZA sütunlarını ANINDA canlı hesapla
         if valid_score_cols:
             edited_raw_df["Toplam"] = edited_raw_df[valid_score_cols].sum(axis=1).astype(int)
             edited_raw_df["ZA"] = edited_raw_df["Toplam"] * 500
 
-        # Kullanıcı adını temsil eden benzersiz sütunu bul (Nick / Personel / Ad)
+        # Kullanıcı/Nick bazlı eşleştirip st.session_state verisini ezilmeden güncelle
         id_col = None
         for col in ["Nick", "Personel", "Kullanıcı", "Ad Soyad"]:
-            if col in df_master.columns:
+            if col in df_base.columns:
                 id_col = col
                 break
 
-        # Ana session_state tablosunu güncelle
-        if id_col:
-            df_master.set_index(id_col, inplace=True)
+        if id_col and search_query:
+            df_base.set_index(id_col, inplace=True)
             edited_temp = edited_raw_df.set_index(id_col)
-            df_master.update(edited_temp)
-            df_master.reset_index(inplace=True)
-            st.session_state["last_processed_df"] = df_master
+            df_base.update(edited_temp)
+            df_base.reset_index(inplace=True)
+            st.session_state["last_processed_df"] = df_base
         else:
             st.session_state["last_processed_df"] = edited_raw_df.copy()
 
@@ -410,34 +332,41 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
         st.write("")
         col_save, _ = st.columns([1, 2])
         with col_save:
-            if st.button("💾 Kanaat & Puan Değişikliklerini Google Sheets'e Kaydet", type="primary", use_container_width=True):
-                with st.spinner("Değişiklikler Google Sheets tablosuna ve ModBot.log sekmesine yazılıyor..."):
+            if st.button("💾 Değişiklikleri Google Sheets'e Kaydet", type="primary", use_container_width=True):
+                with st.spinner("Kanaat ve puan verileri Google Sheets'e işleniyor..."):
                     try:
-                        report_id = st.session_state.get("active_report_id") or TARGET_LOG_SHEET_ID
+                        sheets_data = get_available_spreadsheets(creds_input)
+                        all_sheets = sheets_data.get("all", {})
+                        
+                        rep_id = st.session_state.get("active_report_id")
+                        if not rep_id or rep_id not in all_sheets.values():
+                            for name, sid in all_sheets.items():
+                                if "global perf" in name.lower():
+                                    rep_id = sid
+                                    break
+                        if not rep_id:
+                            rep_id = TARGET_LOG_SHEET_ID
+
                         if isinstance(creds_input, dict):
                             client = gspread.service_account_from_dict(creds_input)
                         else:
                             client = gspread.service_account(filename=creds_input)
                         
-                        wb = client.open_by_key(report_id)
+                        wb = client.open_by_key(rep_id)
                         ws = wb.active
                         
-                        # Güncel hafızadaki veriyi Google Sheets'e toplu aktar
+                        # Güncel hafızadaki veriyi Google Sheets'e aktar
                         updated_df_to_save = st.session_state["last_processed_df"]
-                        
-                        # Sütun başlıkları dahil tüm veriyi liste formatına çevir
                         data_to_write = [updated_df_to_save.columns.tolist()] + updated_df_to_save.astype(str).values.tolist()
                         
-                        # Hücreleri toplu olarak güncelle (Quota takılmasını ve satır kaymasını önler)
                         ws.clear()
                         ws.update('A1', data_to_write)
                         
-                        # ModBot.log sekmesine kayıt at
                         append_log_to_modbot_sheet(
                             "KANAAT/PUAN GÜNCELLEME", 
-                            f"Toplam {len(updated_df_to_save)} satırlık tablo başarıyla güncellendi."
+                            f"Toplam {len(updated_df_to_save)} personelin puan ve kanaat verileri kaydedildi."
                         )
-                        st.success("✅ Tüm Kanaat puanları ve hesaplamalar Google Sheets'e eksiksiz kaydedildi!")
+                        st.success("✅ Tüm Kanaat puanları ve yeni hesaplamalar Google Sheets'e başarıyla kaydedildi!")
                     except Exception as e:
                         st.error(f"❌ Google Sheets kaydetme hatası: {e}")
 
@@ -462,16 +391,24 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
         if process_btn:
             append_log_to_modbot_sheet("ZA MİKTARLARI İŞLENDİ", f"Hedef Ay: {target_month_to_process}")
             with st.spinner("ZA verileri işleniyor..."):
-                sheets_data = get_available_spreadsheets(creds_input)
-                filtered_report_sheets = {name: sid for name, sid in sheets_data.get("all", {}).items() if "global perf" in name.lower()}
-                
-                if filtered_report_sheets:
+                try:
+                    sheets_data = get_available_spreadsheets(creds_input)
+                    all_sheets = sheets_data.get("all", {})
+                    
+                    rep_id = st.session_state.get("active_report_id")
+                    if not rep_id or rep_id not in all_sheets.values():
+                        for name, sid in all_sheets.items():
+                            if "global perf" in name.lower():
+                                rep_id = sid
+                                break
+                    if not rep_id:
+                        rep_id = TARGET_LOG_SHEET_ID
+
                     if isinstance(creds_input, dict):
                         client = gspread.service_account_from_dict(creds_input)
                     else:
                         client = gspread.service_account(filename=creds_input)
 
-                    rep_id = st.session_state.get("active_report_id", TARGET_LOG_SHEET_ID)
                     wb = client.open_by_key(rep_id)
                     ws = wb.active
                     
@@ -484,6 +421,10 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
                     if success:
                         st.balloons()
                         st.success(f"🎉 ZA verileri [{target_month_to_process}] sütununa işlendi!")
+                except gspread.exceptions.SpreadsheetNotFound:
+                    st.error(f"❌ Google Sheets Dosyası Bulunamadı! Lütfen Service Account e-postanıza bu tablo için 'Düzenleyen' yetkisi verdiğinizden emin olun.")
+                except Exception as e:
+                    st.error(f"❌ İşlem sırasında bir hata oluştu: {e}")
 
         st.markdown("---")
         
@@ -514,7 +455,7 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
             df_editable,
             num_rows="dynamic",
             use_container_width=True,
-            key="za_loader_editor_v2"
+            key="za_loader_editor_v3"
         )
 
         col_dl1, col_dl2 = st.columns(2)
