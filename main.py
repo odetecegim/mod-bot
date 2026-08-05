@@ -237,18 +237,18 @@ with col_rep:
     report_id = filtered_report_sheets.get(selected_report_name, "")
 
 # ==========================================
-# 📅 TARIH SEÇİMLERİ (DİL SEÇENEĞİ KALDIRILDI)
+# 📅 TARIH SEÇİMLERİ (2026 VE SONRASI)
 # ==========================================
 
 col_month, col_year = st.columns(2)
 
 with col_month:
-    months = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
+    months = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylul", "Ekim", "Kasım", "Aralık"]
     selected_month = st.selectbox("📅 Ay Seçimi:", options=months, index=6)
 
 with col_year:
-    years = [2024, 2025, 2026, 2027]
-    selected_year = st.selectbox("📆 Yıl Seçimi:", options=years, index=2)
+    years = [2026, 2027, 2028, 2029, 2030]
+    selected_year = st.selectbox("📆 Yıl Seçimi:", options=years, index=0)
 
 st.markdown("---")
 
