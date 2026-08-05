@@ -63,53 +63,28 @@ def get_month_number(month_str):
     return MONTH_MAP.get(norm, 1)
 
 # ==========================================
-# 🎯 HASSAS İSİM EŞLEŞTİRME MANTIĞI
+# 🎯 HASSAS VE SIKI İSİM EŞLEŞTİRME MANTIĞI
 # ==========================================
 
 def match_names(target_name, src_name):
-    """
-    Kullanıcı isimlerini ve Nick'lerini SIKI (STRICT) şekilde eşleştirir.
-    Sadece soyadı aynı olan (örn: Dejan Rajic vs Stefan Rajic) kişilerin 
-    birbiri yerine puan almasını BİREBİR engelleyebilir.
-    """
     t_clean = clean_name_string(target_name)
     s_clean = clean_name_string(src_name)
 
     if not t_clean or not s_clean:
         return False
 
-    # 1. Birebir Tam Metin Eşleşmesi (örn: stefanrajic == stefanrajic)
     if t_clean == s_clean:
         return True
 
     t_words = [w for w in normalize_text(target_name).split() if len(w) > 1]
     s_words = [w for w in normalize_text(src_name).split() if len(w) > 1]
 
-    # 2. Ad + Soyad Kontrolü (İki isimde de en az 2 kelime varsa ADI VE SOYADI BİREBİR EŞİT OLMALI)
     if len(t_words) >= 2 and len(s_words) >= 2:
         return sorted(t_words) == sorted(s_words)
 
-    # 3. Eğer ham veride SADECE Nick yazıyorsa (Örn: EMGSTEFKY007 veya Dev1to)
-    # Hedefteki Nick veya Ad-Soyad ile BİREBİR eşit olmalıdır.
     if len(s_clean) >= 3 and len(t_clean) >= 3:
         if s_clean == t_clean:
             return True
-
-    return False
-    # 1. Birebir Tam Eşleşme (Örn: stefanrajic == stefanrajic)
-    if t_clean == s_clean:
-        return True
-
-    # 2. Ad + Soyad Kelime Kontrolü (Her iki kelime de birebir aynı olmalı)
-    t_words = set(normalize_text(target_name).split())
-    s_words = set(normalize_text(src_name).split())
-
-    if len(t_words) >= 2 and len(s_words) >= 2:
-        return t_words == s_words
-
-    # 3. Nick / Tek İsim Kontrolü (En az 4 karakter tam eşitlik)
-    if len(t_clean) >= 4 and len(s_clean) >= 4:
-        return t_clean == s_clean
 
     return False
 
@@ -132,7 +107,6 @@ def safe_batch_update(sheet, updates, log_func, batch_size=20):
                     raise e
 
 def get_available_spreadsheets(creds_input):
-    """main.py için mevcut Google Sheets listesini getirir."""
     try:
         if isinstance(creds_input, dict):
             creds = Credentials.from_service_account_info(creds_input, scopes=SCOPES)
@@ -146,7 +120,7 @@ def get_available_spreadsheets(creds_input):
         return {"error": str(e), "all": {}, "source": {}, "report": {}}
 
 # ==========================================
-# 🌐 DİL BAZLI HAFİF HANDLER
+# 🌐 DİL VE KATEGORİ HANDLER
 # ==========================================
 
 class AllLanguagesHandler:
@@ -182,7 +156,7 @@ class AllLanguagesHandler:
         return None
 
 # ==========================================
-# 🚀 QA REPORT WORKER (ANA İŞLEYİCİ)
+# 🚀 QA REPORT WORKER
 # ==========================================
 
 class QAReportWorker:
@@ -380,7 +354,6 @@ class QAReportWorker:
                         total_score += count
                         matched_sources.append(src_name)
 
-                # KURAL: SADECE işlem yapmış (puanı > 0 olan) kullanıcıların hücreleri güncellenir!
                 if total_score > 0:
                     a1_cell = gspread.utils.rowcol_to_a1(row_idx, target_c_idx + 1)
                     cell_updates.append({
@@ -404,3 +377,119 @@ class QAReportWorker:
             self.progress(100)
             self.log(f"⚠️ Uyarı: Seçilen {self.selected_month_str} {self.selected_year} filtresine uyan veri bulunamadı.")
             return None
+
+# ==========================================
+# ⚡ OTOMATİK ZA MİKTARI İŞLEME VE TOPLAM HESAPLAMA
+# ==========================================
+
+def process_za_and_insert_month(target_sheet, selected_month, log_func=print):
+    """
+    1. Seçilen ay sütununa ZA miktarlarını aktarır.
+    2. SON MİKTARI OTOMATİK TOPLAR: Personelin tüm aylık ZA'larını veya puanlarını 
+       toplayıp en sağdaki 'Toplanacak Miktar / Yüklenecek ZA' sütununa yazar.
+    """
+    try:
+        all_data = target_sheet.get_all_values()
+        if not all_data or len(all_data) < 2:
+            log_func("⚠️ Hedef tabloda işlenecek veri bulunamadı.")
+            return False
+
+        headers = [str(h).strip() for h in all_data[0]]
+        
+        # ZA ve Toplam Sütunlarını Bul
+        za_col_idx = None
+        total_col_idx = None
+        
+        for idx, h in enumerate(headers):
+            h_upper = h.upper()
+            if "ZA" in h_upper and za_col_idx is None:
+                za_col_idx = idx
+            if any(k in h_upper for k in ["TOPLAM", "YÜKLENECEK", "SON MİKTAR", "REWARD", "ÖDÜL"]):
+                total_col_idx = idx
+
+        if za_col_idx is None:
+            log_func("❌ Hedef tabloda 'ZA' sütunu bulunamadı!")
+            return False
+
+        norm_selected_month = normalize_text(selected_month)
+        month_col_idx = None
+
+        for idx, h in enumerate(headers):
+            if norm_selected_month == normalize_text(h):
+                month_col_idx = idx + 1
+                log_func(f"ℹ️ [{selected_month}] sütunu tabloda zaten mevcut. Mevcut sütuna yazılıyor...")
+                break
+
+        if not month_col_idx:
+            month_order = ["ocak", "subat", "mart", "nisan", "mayis", "haziran", 
+                           "temmuz", "agustos", "eylul", "ekim", "kasim", "aralik"]
+            
+            target_idx_in_order = month_order.index(norm_selected_month) if norm_selected_month in month_order else -1
+            
+            next_month_col_idx = None
+            if target_idx_in_order != -1:
+                for idx, h in enumerate(headers):
+                    h_norm = normalize_text(h)
+                    if h_norm in month_order:
+                        if month_order.index(h_norm) > target_idx_in_order:
+                            next_month_col_idx = idx + 1
+                            break
+
+            if next_month_col_idx:
+                target_sheet.insert_cols([selected_month], col=next_month_col_idx)
+                month_col_idx = next_month_col_idx
+                log_func(f"➕ [{selected_month}] sütunu sonraki ayın SOLUNA açıldı.")
+            else:
+                insert_position = za_col_idx + 1 if za_col_idx else len(headers) + 1
+                target_sheet.insert_cols([selected_month], col=insert_position)
+                month_col_idx = insert_position
+                log_func(f"➕ [{selected_month}] sütunu yeni olarak eklendi.")
+
+        all_data_updated = target_sheet.get_all_values()
+        updates = []
+
+        for row_idx, row in enumerate(all_data_updated[1:], start=2):
+            if not row:
+                continue
+
+            name = str(row[1]).strip() if len(row) > 1 else ""
+            if not name or name.startswith("#"):
+                continue
+
+            za_value = str(row[za_col_idx]).strip() if za_col_idx < len(row) else ""
+            
+            # Ay Sütununa Veriyi Aktar
+            if za_value and za_value != "0" and not za_value.startswith("#"):
+                a1_cell = gspread.utils.rowcol_to_a1(row_idx, month_col_idx)
+                updates.append({
+                    'range': f"{a1_cell}:{a1_cell}",
+                    'values': [[za_value]]
+                })
+
+            # 🧮 SON MİKTARI OTOMATİK HESAPLA & TOPLA
+            if total_col_idx is not None:
+                # Satırdaki sayısal değerleri topla
+                total_val = 0
+                for cell in row[2:]:
+                    clean_c = re.sub(r'[^\d]', '', str(cell))
+                    if clean_c.isdigit():
+                        total_val += int(clean_c)
+
+                if total_val > 0:
+                    tot_cell = gspread.utils.rowcol_to_a1(row_idx, total_col_idx + 1)
+                    updates.append({
+                        'range': f"{tot_cell}:{tot_cell}",
+                        'values': [[str(total_val)]]
+                    })
+
+        if updates:
+            safe_batch_update(target_sheet, updates, log_func)
+            log_func(f"✅ ZA miktarları işlendi ve Toplam Miktar sütunları otomatik güncellendi! ({len(updates)} kayıt)")
+            return True
+        else:
+            log_func(f"⚠️ [{selected_month}] için aktarılacak geçerli ZA miktarı bulunamadı.")
+            return False
+
+    except Exception as e:
+        log_func(f"❌ İşleme hatası: {str(e)}")
+        return False
