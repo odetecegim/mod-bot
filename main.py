@@ -53,9 +53,6 @@ def check_session_timeout():
 check_session_timeout()
 
 # ==========================================
-# ==========================================
-# ==========================================
-# ==========================================
 # 🔑 SADECE ŞİFRE İLE GİRİŞ EKRANI
 # ==========================================
 
@@ -101,12 +98,12 @@ def login_screen():
             }
             .brand-logo-container {
                 text-align: center;
-                margin-bottom: 1.5rem;
+                margin-bottom: 1rem;
             }
             .brand-logo-img {
-                max-width: 140px;
+                max-width: 70px;
                 height: auto;
-                filter: drop-shadow(0px 0px 10px rgba(245, 158, 11, 0.4));
+                filter: drop-shadow(0px 0px 8px rgba(245, 158, 11, 0.4));
             }
         </style>
     """, unsafe_allow_html=True)
@@ -117,7 +114,7 @@ def login_screen():
         st.write("")
         st.write("")
         
-        # --- SADECE LOGO (YAZISIZ & KÜÇÜLTÜLMÜŞ) ---
+        # --- KÜÇÜLTÜLMÜŞ LOGO ---
         st.markdown('''
             <div class="brand-logo-container">
                 <img src="https://resmim.net/cdn/2026/08/05/EYU08h.webp" class="brand-logo-img" alt="Zula Logo">
