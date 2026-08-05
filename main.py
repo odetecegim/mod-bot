@@ -9,7 +9,6 @@ from backend import QAReportWorker, get_available_spreadsheets
 # Streamlit Konfigürasyonu (En Üstte Olmalıdır)
 st.set_page_config(
     page_title="Game Moderation",
-    page_icon="📊",
     layout="wide"
 )
 
