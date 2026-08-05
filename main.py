@@ -88,6 +88,7 @@ def append_log_to_google_sheet(creds, status, details):
 
         ws = sh.sheet1
 
+        # Başlık yoksa ekle
         if len(ws.get_all_values()) == 0:
             ws.append_row([
                 "Tarih / Saat", 
@@ -100,19 +101,30 @@ def append_log_to_google_sheet(creds, status, details):
                 "Hata Detayı"
             ])
 
+        # Parametrelerin boş kalması durumuna karşı güvenli dönüştürme
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        user = details.get("user") or st.session_state.get("current_user") or "Bilinmeyen Kullanıcı"
-        error_msg = str(details.get("error", ""))
+        
+        # Kullanıcı Adı Kontrolü
+        user_name = details.get("user")
+        if not user_name:
+            user_name = st.session_state.get("current_user", "Bilinmeyen Kullanıcı")
+            
+        source_val = str(details.get("source") or "-")
+        report_val = str(details.get("report") or "-")
+        month_val = str(details.get("month") or "-")
+        year_val = str(details.get("year") or "-")
+        error_msg = str(details.get("error") or "")
 
+        # Sütun sırası tam olarak 8 elemandan oluşur (A-H arası)
         row = [
-            timestamp,
-            user,
-            str(details.get("source", "-")),
-            str(details.get("report", "-")),
-            str(details.get("month", "-")),
-            str(details.get("year", "-")),
-            status,
-            error_msg
+            timestamp,   # A: Tarih / Saat
+            user_name,   # B: İşlemi Yapan Kullanıcı
+            source_val,  # C: Kaynak Tablo
+            report_val,  # D: Rapor Tablosu
+            month_val,   # E: Ay
+            year_val,    # F: Yıl
+            status,      # G: Durum
+            error_msg    # H: Hata Detayı
         ]
         
         ws.append_row(row, value_input_option="USER_ENTERED")
