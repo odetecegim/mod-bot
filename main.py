@@ -379,26 +379,44 @@ if submit_button:
                 progress_callback=progress_callback
             )
             
-          # --- İŞLEM BAŞLATMA ---
-if submit_button:
-    progress_bar = st.progress(0)
+            # Raporu İşle
+            updated_data = worker.process()
+        
+        # ModBot.log Google Sheet Dosyasına Başarılı Kaydı
+        append_log_to_google_sheet(creds_input, "Başarılı ✅", job_details)
+        
+        if updated_data is not None and isinstance(updated_data, pd.DataFrame) and not updated_data.empty:
+            st.success("✅ Rapor başarıyla işlendi ve ana tabloya aktarıldı!")
+            st.subheader("👁️ Güncellenen Veri Önizlemesi")
+            st.dataframe(updated_data, use_container_width=True)
+        else:
+            st.warning(f"⚠️ **{selected_month} {selected_year}** dönemi için filtrelenen veri boş döndü.")
+            
+            with st.expander("🔍 Tablo ve Sekme Teşhisi", expanded=True):
+                try:
+                    if isinstance(creds_input, str):
+                        gc = gspread.service_account(filename=creds_input)
+                    else:
+                        gc = gspread.service_account_from_dict(creds_input)
+                    
+                    src_sh = gc.open_by_key(source_id)
+                    sheet_names = [ws.title for ws in src_sh.worksheets()]
+                    st.write(f"📌 **Seçilen Tablo:** `{src_sh.title}`")
+                    st.write(f"📑 **Mevcut Sekmeler:** `{sheet_names}`")
+                except Exception as diag_err:
+                    st.error(f"Teşhis Bağlantı Hatası: {diag_err}")
 
-    def silent_log_callback(msg):
-        pass
-
-    def progress_callback(val):
-        progress_bar.progress(val)
-
-    job_details = {
-        "source": source_name,
-        "report": report_name,
-        "month": selected_month,
-        "year": selected_year,
-        "user": current_user
-    }
-
-    try:
-        with st.spinner("⏳ Veriler Google Sheets üzerinden okunuyor ve işleniyor, lütfen bekleyin..."):
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        job_details["error"] = str(e)
+        
+        append_log_to_google_sheet(creds_input, "Hata ❌", job_details)
+        st.error(f"❌ İşlem sırasında bir hata oluştu: {str(e)}")
+        
+        with st.expander("🔍 Teknik Hata Detayını Gör"):
+            st.code(error_details, language="python")
+            
             # Sekme uyumsuzluğunu aşmak için dinamik backend çağrısı
             worker = QAReportWorker(
                 creds_input=creds_input,
