@@ -63,7 +63,7 @@ creds_input = get_credentials()
 
 # --- GOOGLE SHEETS "ModBot.log" DOSYASINA LOG YAZMA ---
 def append_log_to_google_sheet(creds, status, details):
-    """Log kayıtlarını ModBot.log Google Sheet dosyasına sütun sütun işler."""
+    """Log kayıtlarını ModBot.log Google Sheet dosyasına her zaman A sütunundan başlayarak işler."""
     try:
         if isinstance(creds, str):
             gc = gspread.service_account(filename=creds)
@@ -74,48 +74,37 @@ def append_log_to_google_sheet(creds, status, details):
             sh = gc.open(LOG_SHEET_NAME)
         except gspread.exceptions.SpreadsheetNotFound:
             sh = gc.create(LOG_SHEET_NAME)
-            ws = sh.sheet1
-            ws.append_row([
-                "Tarih / Saat", 
-                "İşlemi Yapan Kullanıcı", 
-                "Kaynak Tablo", 
-                "Rapor Tablosu", 
-                "Ay", 
-                "Yıl", 
-                "Durum", 
-                "Hata Detayı"
-            ])
 
         ws = sh.sheet1
+        all_vals = ws.get_all_values()
+
+        headers = [
+            "Tarih / Saat", 
+            "İşlemi Yapan Kullanıcı", 
+            "Kaynak Tablo", 
+            "Rapor Tablosu", 
+            "Ay", 
+            "Yıl", 
+            "Durum", 
+            "Hata Detayı"
+        ]
 
         # Başlık yoksa ekle
-        if len(ws.get_all_values()) == 0:
-            ws.append_row([
-                "Tarih / Saat", 
-                "İşlemi Yapan Kullanıcı", 
-                "Kaynak Tablo", 
-                "Rapor Tablosu", 
-                "Ay", 
-                "Yıl", 
-                "Durum", 
-                "Hata Detayı"
-            ])
+        if len(all_vals) == 0:
+            ws.update(range_name='A1', values=[headers])
+            next_row = 2
+        else:
+            next_row = len(all_vals) + 1
 
-        # Parametrelerin boş kalması durumuna karşı güvenli dönüştürme
+        # Parametrelerin güvenli dönüştürülmesi
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        # Kullanıcı Adı Kontrolü
-        user_name = details.get("user")
-        if not user_name:
-            user_name = st.session_state.get("current_user", "Bilinmeyen Kullanıcı")
-            
+        user_name = details.get("user") or st.session_state.get("current_user") or "Bilinmeyen Kullanıcı"
         source_val = str(details.get("source") or "-")
         report_val = str(details.get("report") or "-")
         month_val = str(details.get("month") or "-")
         year_val = str(details.get("year") or "-")
         error_msg = str(details.get("error") or "")
 
-        # Sütun sırası tam olarak 8 elemandan oluşur (A-H arası)
         row = [
             timestamp,   # A: Tarih / Saat
             user_name,   # B: İşlemi Yapan Kullanıcı
@@ -126,11 +115,12 @@ def append_log_to_google_sheet(creds, status, details):
             status,      # G: Durum
             error_msg    # H: Hata Detayı
         ]
-        
-        ws.append_row(row, value_input_option="USER_ENTERED")
+
+        # Doğrudan A sütunundaki ilgili satıra yazar (A:H aralığı)
+        ws.update(range_name=f'A{next_row}:H{next_row}', values=[row], value_input_option="USER_ENTERED")
+
     except Exception as e:
         print(f"Google Sheet Log Yazma Hatası: {e}")
-
 # --- OTURUM VE ZAMAN AŞIMI YÖNETİMİ ---
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
