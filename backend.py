@@ -3,6 +3,7 @@ import re
 import time
 import unicodedata
 from collections import Counter
+import pandas as pd
 import gspread
 from gspread.exceptions import APIError
 from google.oauth2.service_account import Credentials
@@ -127,7 +128,7 @@ def get_available_spreadsheets(creds_input):
 
 class BaseLanguageHandler:
     def is_ignored_sheet(self, norm_title):
-        ignore_keywords = ["0kullanici", "0kul", "test"]
+        ignore_keywords = ["0kullanici", "0kul", "test", "old"]
         return any(k in norm_title for k in ignore_keywords)
 
     def parse_date(self, date_val):
@@ -138,7 +139,6 @@ class BaseLanguageHandler:
         if not str_val:
             return None, None
 
-        # Tarihi saat bilgisinden (05.07.2026 02:31:27) ayırır
         clean_date = re.split(r'\s+', str_val)[0]
         for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d.%m.%y", "%d/%m/%y"):
             try:
@@ -149,76 +149,41 @@ class BaseLanguageHandler:
 
         return None, None
 
-class PORLanguageHandler(BaseLanguageHandler):
+class AllLanguagesHandler(BaseLanguageHandler):
+    """Tüm dillerdeki (ENG, ESP, POR, TR) sekme isimlerini destekleyen birleşik handler."""
     def map_category(self, ws_title):
         norm = normalize_text(ws_title)
         if self.is_ignored_sheet(norm):
             return None
-        if any(k in norm for k in ["cartaodemissao", "missao", "diaria", "pass", "gkarti", "kart"]):
+        
+        # Günlük Görev / Mission Card
+        if any(k in norm for k in ["mision", "mission", "cartaodemissao", "tarjeta", "zulapass", "gunluk", "gkarti", "pass", "kart"]):
             return "G. Kartı (Günlük)"
-        elif any(k in norm for k in ["verificacaogeral", "geral", "check"]):
+        # Genel Check
+        elif any(k in norm for k in ["verificacaogeral", "generalcheck", "genelcheck", "revision", "general", "geral", "check", "genel"]):
             return "Genel Check"
-        return None
-
-class TRLanguageHandler(BaseLanguageHandler):
-    def map_category(self, ws_title):
-        norm = normalize_text(ws_title)
-        if self.is_ignored_sheet(norm):
-            return None
-        if any(k in norm for k in ["zulapass", "gunluk", "gkarti", "mission", "pass", "kart"]):
-            return "G. Kartı (Günlük)"
-        elif any(k in norm for k in ["genelcheck", "genel"]):
-            return "Genel Check"
-        return None
-
-class ESPLanguageHandler(BaseLanguageHandler):
-    def map_category(self, ws_title):
-        norm = normalize_text(ws_title)
-        if self.is_ignored_sheet(norm):
-            return None
-        if any(k in norm for k in ["mision", "diaria", "tarjeta", "pase", "pass", "gkarti", "kart"]):
-            return "G. Kartı (Günlük)"
-        elif any(k in norm for k in ["revision", "general", "check"]):
-            return "Genel Check"
-        return None
-
-class ENGLanguageHandler(BaseLanguageHandler):
-    def map_category(self, ws_title):
-        norm = normalize_text(ws_title)
-        if self.is_ignored_sheet(norm):
-            return None
-        if any(k in norm for k in ["missioncard", "mission", "card", "pass", "gkarti", "kart"]):
-            return "G. Kartı (Günlük)"
-        elif any(k in norm for k in ["generalcheck", "general", "check"]):
-            return "Genel Check"
+            
         return None
 
 def get_language_handler(lang_code):
-    lang = str(lang_code).upper().strip()
-    if "POR" in lang:
-        return PORLanguageHandler()
-    elif "ESP" in lang:
-        return ESPLanguageHandler()
-    elif "ENG" in lang or "EN" in lang:
-        return ENGLanguageHandler()
-    else:
-        return TRLanguageHandler()
+    # Dil seçeneği ne olursa olsun genel handler ile tüm sekmeleri tarıyoruz
+    return AllLanguagesHandler()
 
 # ==========================================
 # 🚀 QA REPORT WORKER (ANA İŞLEYİCİ)
 # ==========================================
 
 class QAReportWorker:
-    def __init__(self, creds_input, source_id, report_id, selected_lang, selected_year, selected_month, log_callback, progress_callback):
+    def __init__(self, creds_input, source_id, report_id, selected_lang="Tümü", selected_year=2026, selected_month="Ocak", log_callback=None, progress_callback=None):
         self.creds_input = creds_input
         self.source_id = source_id
         self.report_id = report_id
-        self.selected_lang = selected_lang.upper().strip()
+        self.selected_lang = str(selected_lang).upper().strip()
         self.selected_year = int(selected_year)
         self.selected_month_num = get_month_number(selected_month)
         self.selected_month_str = selected_month
-        self.log = log_callback
-        self.progress = progress_callback
+        self.log = log_callback if log_callback else print
+        self.progress = progress_callback if progress_callback else (lambda x: None)
         self.handler = get_language_handler(self.selected_lang)
 
     def connect(self):
@@ -230,23 +195,19 @@ class QAReportWorker:
 
     def get_target_worksheet(self, report_wb):
         all_worksheets = report_wb.worksheets()
-        target_lang = normalize_text(self.selected_lang)
         target_month = normalize_text(self.selected_month_str)
         target_year = str(self.selected_year).strip()
 
+        # Ay ve Yıl adının geçtiği sekme
         for ws in all_worksheets:
             t_lower = normalize_text(ws.title)
-            if target_lang in t_lower and target_month in t_lower and target_year in t_lower:
+            if target_month in t_lower and target_year in t_lower:
                 return ws
 
+        # Sadece Ay adının geçtiği sekme
         for ws in all_worksheets:
             t_lower = normalize_text(ws.title)
-            if target_lang in t_lower and target_month in t_lower:
-                return ws
-
-        for ws in all_worksheets:
-            t_lower = normalize_text(ws.title)
-            if target_lang in t_lower:
+            if target_month in t_lower:
                 return ws
 
         return report_wb.sheet1
@@ -264,16 +225,15 @@ class QAReportWorker:
         headers = [normalize_text(h) for h in raw_rows[0]]
         data_rows = raw_rows[1:]
 
-        date_col_idx = 0  # Görseldeki gibi 1. Kolon Tarih
+        date_col_idx = 0
         user_col_indices = []
 
-        # İsim / Nick sütunlarının tespiti
         for idx, h in enumerate(headers):
             if any(u in h for u in ["nombre", "apellido", "nick", "personaje", "kullanici", "user", "name", "qa", "reporter"]):
                 user_col_indices.append(idx)
 
         if not user_col_indices:
-            user_col_indices = [1, 2] # Default olarak 2. ve 3. Sütunlar (Nombre & Nick)
+            user_col_indices = [1, 2]
 
         counts = Counter()
 
@@ -281,7 +241,6 @@ class QAReportWorker:
             if not any(row_vals):
                 continue
 
-            # 1. TARİH VE AY FİLTRESİ
             date_val = row_vals[date_col_idx] if date_col_idx < len(row_vals) else None
             m_num, y_num = self.handler.parse_date(date_val)
 
@@ -290,14 +249,13 @@ class QAReportWorker:
             if m_num and m_num != self.selected_month_num:
                 continue
 
-            # 2. İSİM SEÇİMİ (Aynı satırdaki Ad-Soyad veya Nick'ten geçerli olan 1 tanesini alır)
             primary_name = ""
             for u_idx in user_col_indices:
                 if u_idx < len(row_vals):
                     val = str(row_vals[u_idx]).strip()
                     if val and not any(tot in val.lower() for tot in ["toplam", "total", "sum", "nombre", "nick"]):
                         primary_name = val
-                        break # İlk geçerli ismi bulduğunda durur (çift sayımı engeller)
+                        break
 
             if primary_name:
                 counts[primary_name] += 1
@@ -305,7 +263,7 @@ class QAReportWorker:
         return counts
 
     def process(self):
-        self.log(f"İşlem Modülü: [{self.handler.__class__.__name__}] | Dil: [{self.selected_lang}] | Filtre: [{self.selected_month_str} (Ay: {self.selected_month_num}) {self.selected_year}]")
+        self.log(f"İşlem Modülü: [{self.handler.__class__.__name__}] | Filtre: [{self.selected_month_str} (Ay: {self.selected_month_num}) {self.selected_year}]")
         self.progress(10)
         client = self.connect()
 
@@ -331,10 +289,10 @@ class QAReportWorker:
             target_col_name = self.handler.map_category(ws_title)
 
             if not target_col_name:
-                self.log(f"🚫 Pas geçildi (Kategori Dışı Sekme): [{ws_title}]")
+                self.log(f"🚫 Pas geçildi (Kategori Dışı veya OLD Sekme): [{ws_title}]")
                 continue
 
-            self.log(f"📊 ESP Sekmesi Okunuyor: [{ws_title}] ➔ Hedef Sütun: '{target_col_name}'")
+            self.log(f"📊 Sekme Okunuyor: [{ws_title}] ➔ Hedef Kategori: '{target_col_name}'")
             user_counts = self.count_user_reports_in_sheet(ws)
             
             if target_col_name not in category_counts:
@@ -347,7 +305,7 @@ class QAReportWorker:
         if not target_rows:
             self.log("⚠️ Hedef raporda yazılacak veri alanı bulunamadı!")
             self.progress(100)
-            return
+            return None
 
         target_headers = [str(h).strip() for h in target_rows[0]]
 
@@ -413,3 +371,9 @@ class QAReportWorker:
         else:
             self.progress(100)
             self.log(f"⚠️ Uyarı: Seçilen filtre kriterlerine uyan kayıt bulunamadı.")
+
+        # Streamlit arayüzü önizlemesi için güncellenmiş tabloyu DataFrame olarak döndürür
+        final_rows = target_sheet.get_all_values()
+        if final_rows and len(final_rows) > 1:
+            return pd.DataFrame(final_rows[1:], columns=final_rows[0])
+        return pd.DataFrame(final_rows)
