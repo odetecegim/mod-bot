@@ -48,7 +48,7 @@ if not creds_input:
     st.stop()
 
 # ==========================================
-# 📁 ETABLO SEÇİM ALANI (ANA EKRAN)
+# 📁 ETABLO SEÇİM ALANI (FİLTRELENMİŞ LISTELER)
 # ==========================================
 
 sheets_data = get_available_spreadsheets(creds_input)
@@ -62,7 +62,24 @@ if not all_sheets:
     st.warning("⚠️ Hesabınıza tanımlı hiç Google Sheets dosyası bulunamadı.")
     st.stop()
 
-sorted_sheet_names = sorted(list(all_sheets.keys()))
+# 1. Kaynak (Ham Veri) Listesi: "Global Perf Tablosu" ve log dosyalarını filtrele
+filtered_source_sheets = {
+    name: sid for name, sid in all_sheets.items()
+    if "global perf" not in name.lower() and not name.lower().endswith(".log") and "modbot" not in name.lower()
+}
+sorted_source_names = sorted(list(filtered_source_sheets.keys()))
+
+# 2. Hedef (Konsolide Rapor) Listesi: Sadece "Global Perf Tablosu" kalsın
+filtered_report_sheets = {
+    name: sid for name, sid in all_sheets.items()
+    if "global perf" in name.lower()
+}
+sorted_report_names = sorted(list(filtered_report_sheets.keys()))
+
+# Eğer listede bulunamazsa güvenlik önlemi
+if not sorted_report_names:
+    sorted_report_names = sorted(list(all_sheets.keys()))
+    filtered_report_sheets = all_sheets
 
 st.subheader("⚙️ Dosya Seçimleri")
 col_src, col_rep = st.columns(2)
@@ -70,34 +87,26 @@ col_src, col_rep = st.columns(2)
 with col_src:
     selected_source_name = st.selectbox(
         "📁 Kaynak (Ham Veri) Dosyası:",
-        options=sorted_sheet_names,
-        index=0,
-        help="İşlenecek veri tablosunu seçin (Örn: Error Reporting ENG, POR, ESP)"
+        options=sorted_source_names,
+        index=0 if sorted_source_names else 0,
+        help="İşlenecek ham veri tablosunu seçin."
     )
-    source_id = all_sheets[selected_source_name]
+    source_id = filtered_source_sheets.get(selected_source_name, "")
 
 with col_rep:
-    default_rep_idx = 1 if len(sorted_sheet_names) > 1 else 0
     selected_report_name = st.selectbox(
         "🎯 Hedef (Ana Konsolide Rapor) Dosyası:",
-        options=sorted_sheet_names,
-        index=default_rep_idx,
-        help="Puanların yazılacağı ANA Konsolide Rapor dosyasını seçin."
+        options=sorted_report_names,
+        index=0,
+        help="Puanların yazılacağı Global Perf Tablosu dosyasını seçin."
     )
-    report_id = all_sheets[selected_report_name]
+    report_id = filtered_report_sheets.get(selected_report_name, "")
 
 # ==========================================
-# 📅 FİLTRE VE DİL SEÇİMLERİ (Sadece ENG, POR, ESP)
+# 📅 TARIH SEÇİMLERİ (DİL SEÇENEĞİ KALDIRILDI)
 # ==========================================
 
-col_lang, col_month, col_year = st.columns(3)
-
-with col_lang:
-    selected_lang = st.selectbox(
-        "🌐 Dil Filtresi / Tipi:", 
-        options=["Tümü", "ENG", "POR", "ESP"], 
-        index=0
-    )
+col_month, col_year = st.columns(2)
 
 with col_month:
     months = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
@@ -134,7 +143,7 @@ if st.button("🚀 Raporu Çalıştır", type="primary", use_container_width=Tru
             creds_input=creds_input,
             source_id=source_id,
             report_id=report_id,
-            selected_lang=selected_lang,
+            selected_lang="Tümü",  # Dil paneli kaldırıldığı için otomatik "Tümü" gönderiliyor
             selected_year=selected_year,
             selected_month=selected_month,
             log_callback=append_log,
