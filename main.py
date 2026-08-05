@@ -323,7 +323,7 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
         else:
             st.session_state["last_processed_df"] = edited_raw_df.copy()
 
-        # ------------------------------------------------------------------
+      # ------------------------------------------------------------------
         # 💾 GOOGLE SHEETS & MODBOT.LOG SENKRONİZASYON BUTONU
         # ------------------------------------------------------------------
         st.write("")
@@ -350,9 +350,15 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
                             client = gspread.service_account(filename=creds_input)
                         
                         wb = client.open_by_key(rep_id)
-                        ws = wb.sheet1  # DÜZELTME: wb.active yerine wb.sheet1 kullanıldı
+                        ws = wb.sheet1
                         
-                        updated_df_to_save = st.session_state["last_processed_df"]
+                        # Güncel hafızadaki veriyi al
+                        updated_df_to_save = st.session_state["last_processed_df"].copy()
+                        
+                        # NaN / Boş değerleri temizle (JSON 'nan' hatasını engeller)
+                        updated_df_to_save = updated_df_to_save.fillna("")
+                        
+                        # Veriyi metin formatında liste dizisine dönüştür
                         data_to_write = [updated_df_to_save.columns.tolist()] + updated_df_to_save.astype(str).values.tolist()
                         
                         ws.clear()
@@ -367,8 +373,6 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
                         st.rerun()
                     except Exception as e:
                         st.error(f"❌ Google Sheets kaydetme hatası: {e}")
-
-        st.markdown("---")
         
         # ⚡ İŞLE BUTONU (AY TABLOSUNA AKTAR)
         st.subheader("⚡ ZA Miktarlarını Ay Tablosuna Aktar & Son Miktarı Hesapla")
