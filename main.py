@@ -7,51 +7,35 @@ def login_screen():
             .stApp {{
                 background: radial-gradient(circle at center, #2a2d34 0%, #121316 60%, #08080a 100%) !important;
             }}
-            html, body, [data-testid="stAppViewContainer"] {{
-                height: 100vh;
-                margin: 0;
-                padding: 0;
-            }}
-            /* Dış Kapsayıcıyı Daraltma ve Ortalamak */
+            /* Dış Kapsayıcıyı Hizalama */
             .main .block-container {{
-                padding-top: 5rem !important;
-                padding-bottom: 2rem !important;
-                max-width: 380px !important;
+                max-width: 400px !important;
+                padding-top: 6rem !important;
+                padding-bottom: 3rem !important;
                 margin: 0 auto !important;
-                display: flex;
-                flex-direction: column;
-                justify-content: center;
-                position: relative;
             }}
             /* Logo Görseli */
             .main .block-container::before {{
                 content: "";
-                position: absolute;
-                top: 8%;
-                left: 50%;
-                transform: translateX(-50%);
-                width: 260px;
-                height: 120px;
+                display: block;
+                margin: 0 auto 1.5rem auto;
+                width: 240px;
+                height: 100px;
                 background-image: url('{zula_logo_url}');
                 background-size: contain;
                 background-repeat: no-repeat;
                 background-position: center;
-                opacity: 0.9;
+                opacity: 0.95;
                 filter: drop-shadow(0 0 20px rgba(245, 158, 11, 0.4));
-                pointer-events: none;
-                z-index: 0;
             }}
-            /* Form / Kart Tasarımı */
+            /* Form / Kutu Tasarımı */
             div[data-testid="stForm"] {{
-                position: relative;
-                z-index: 1;
                 background: rgba(18, 20, 26, 0.85) !important;
                 border: 1px solid rgba(255, 255, 255, 0.12) !important;
                 border-radius: 20px !important;
                 padding: 2rem 1.8rem !important;
                 box-shadow: 0 25px 50px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
                 backdrop-filter: blur(12px);
-                margin-top: 10vh !important;
             }}
             label {{
                 color: #f1f5f9 !important;
@@ -77,12 +61,10 @@ def login_screen():
                 margin-top: 10px !important;
             }}
             .footer-text {{
-                position: relative;
-                z-index: 1;
                 text-align: center;
                 font-size: 12px;
                 color: #94a3b8;
-                margin-top: 1.2rem;
+                margin-top: 1.5rem;
             }}
         </style>
     """, unsafe_allow_html=True)
