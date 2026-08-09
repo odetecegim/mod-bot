@@ -224,7 +224,7 @@ if page == "🚀 Rapor Çalıştır":
         report_id = filtered_report_sheets.get(selected_report_name, TARGET_LOG_SHEET_ID)
         st.session_state["active_report_id"] = report_id
 
-    col_month, col_year = st.columns(2)
+    col_month, col_year, col_lang = st.columns(3)
     with col_month:
         months = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
         selected_month = st.selectbox("📅 Ay:", options=months)
@@ -232,6 +232,10 @@ if page == "🚀 Rapor Çalıştır":
         years = [2026, 2027, 2028, 2029, 2030]
         selected_year = st.selectbox("📆 Yıl:", options=years)
         st.session_state["selected_year"] = selected_year
+    with col_lang:
+        languages = ["ENG", "ESP", "POR"]
+        selected_language = st.selectbox("🌐 Dil:", options=languages)
+        st.session_state["selected_language"] = selected_language
 
     log_container = st.empty()
     log_messages = []
@@ -243,7 +247,7 @@ if page == "🚀 Rapor Çalıştır":
 
     if st.button("🚀 Raporu Çalıştır", type="primary", use_container_width=True):
         st.session_state["active_report_id"] = report_id
-        append_log_to_modbot_sheet("RAPOR ÇALIŞTIRILDI", f"Kaynak: {selected_source_name}, Hedef: {selected_report_name}, Dönem: {selected_month} {selected_year}")
+        append_log_to_modbot_sheet("RAPOR ÇALIŞTIRILDI", f"Kaynak: {selected_source_name}, Hedef: {selected_report_name}, Dil: {selected_language}, Dönem: {selected_month} {selected_year}")
         
         worker = QAReportWorker(
             creds_input=creds_input,
@@ -251,6 +255,7 @@ if page == "🚀 Rapor Çalıştır":
             report_id=report_id,
             selected_year=selected_year,
             selected_month=selected_month,
+            selected_language=selected_language,
             log_callback=append_log,
             progress_callback=progress_bar.progress
         )
@@ -258,6 +263,7 @@ if page == "🚀 Rapor Çalıştır":
         if updated_df is not None and not updated_df.empty:
             st.session_state["last_processed_df"] = updated_df
             st.session_state["selected_month"] = selected_month
+            st.session_state["active_report_ws_title"] = worker.used_worksheet_title
             st.success("🎉 Veriler başarıyla işlendi!")
         else:
             st.error("❌ Veri bulunamadı veya aktarım başarısız.")
@@ -274,17 +280,19 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
         
         # 1. Personel / Nick Arama
         search_query = st.text_input("🔍 Personel / Nick Arama:", "")
-        
-        df_base = st.session_state["last_processed_df"].copy()
-        
-        if search_query:
-            df_display = df_base[df_base.apply(lambda row: row.astype(str).str.contains(search_query, case=False).any(), axis=1)].copy()
-        else:
-            df_display = df_base.copy()
 
-        # 2. Düzenlenebilir Tablo
+        # Editör her zaman TAM tabloyu kullanır (arama sadece görsel filtre
+        # olarak ayrı bir bileşende gösterilir). Böylece widget key'i sabit
+        # kalırken satır indeksleri asla kaymaz ve girilen değerler kaybolmaz.
+        df_base = st.session_state["last_processed_df"].copy()
+
+        if search_query:
+            mask = df_base.apply(lambda row: row.astype(str).str.contains(search_query, case=False).any(), axis=1)
+            st.caption(f"🔎 {mask.sum()} satır eşleşti (tüm tablo aşağıda düzenlenebilir; arama sadece vurgu amaçlıdır).")
+
+        # 2. Düzenlenebilir Tablo (her zaman tam veri; index sabit tutulur)
         edited_raw_df = st.data_editor(
-            df_display,
+            df_base,
             num_rows="dynamic",
             use_container_width=True,
             key="genel_performans_editor_v7",
@@ -311,20 +319,14 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
             edited_raw_df["Toplam"] = edited_raw_df[valid_score_cols].sum(axis=1).astype(int)
             edited_raw_df["ZA"] = edited_raw_df["Toplam"] * 500
 
-        id_col = None
-        for col in ["Nick", "Personel", "Kullanıcı", "Ad Soyad"]:
-            if col in df_base.columns:
-                id_col = col
-                break
+        # Hesaplanan Toplam/ZA sütunlarını anında session_state'e yaz ki
+        # hem ekranda güncel görünsün hem de kaydet/aktar butonları güncel
+        # veriyi kullansın.
+        st.session_state["last_processed_df"] = edited_raw_df.copy()
 
-        if id_col and search_query:
-            df_base.set_index(id_col, inplace=True)
-            edited_temp = edited_raw_df.set_index(id_col)
-            df_base.update(edited_temp)
-            df_base.reset_index(inplace=True)
-            st.session_state["last_processed_df"] = df_base
-        else:
-            st.session_state["last_processed_df"] = edited_raw_df.copy()
+        if search_query:
+            display_mask = edited_raw_df.apply(lambda row: row.astype(str).str.contains(search_query, case=False).any(), axis=1)
+            st.dataframe(edited_raw_df[display_mask], use_container_width=True)
 
         # ------------------------------------------------------------------
         # 💾 GOOGLE SHEETS & MODBOT.LOG SENKRONİZASYON BUTONU (OTO YENİLEMELİ)
@@ -353,8 +355,16 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
                             client = gspread.service_account(filename=creds_input)
                         
                         wb = client.open_by_key(rep_id)
-                        ws = wb.sheet1
-                        
+                        active_ws_title = st.session_state.get("active_report_ws_title")
+                        ws = None
+                        if active_ws_title:
+                            for w in wb.worksheets():
+                                if w.title.strip().lower() == str(active_ws_title).strip().lower():
+                                    ws = w
+                                    break
+                        if ws is None:
+                            ws = wb.sheet1
+
                         updated_df_to_save = st.session_state["last_processed_df"].copy()
                         updated_df_to_save = updated_df_to_save.fillna("")
                         
@@ -380,12 +390,18 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
         # ------------------------------------------------------------------
         st.subheader("⚡ ZA Miktarlarını Ay Tablosuna Aktar & Son Miktarı Hesapla")
         
-        col_month_sel, col_btn = st.columns([2, 1])
+        col_month_sel, col_lang_sel, col_btn = st.columns([2, 1, 1])
         with col_month_sel:
             target_month_to_process = st.selectbox(
                 "İşlenecek Hedef Ayı Seçin:", 
                 ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"],
                 index=6
+            )
+        with col_lang_sel:
+            lang_for_process = st.selectbox(
+                "Dil:",
+                ["ENG", "ESP", "POR"],
+                index=["ENG", "ESP", "POR"].index(st.session_state.get("selected_language", "ENG")) if st.session_state.get("selected_language", "ENG") in ["ENG", "ESP", "POR"] else 0
             )
 
         with col_btn:
@@ -394,7 +410,7 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
             process_btn = st.button("⚡ ZA Miktarlarını İşle", type="primary", use_container_width=True)
 
         if process_btn:
-            append_log_to_modbot_sheet("ZA MİKTARLARI İŞLENDİ", f"Hedef Ay: {target_month_to_process}")
+            append_log_to_modbot_sheet("ZA MİKTARLARI İŞLENDİ", f"Hedef Ay: {target_month_to_process}, Dil: {lang_for_process}")
             with st.spinner("ZA verileri Global Perf Tablosundaki ilgili sekmeye işleniyor..."):
                 try:
                     sheets_data = get_available_spreadsheets(creds_input)
@@ -415,7 +431,27 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
                         client = gspread.service_account(filename=creds_input)
 
                     wb = client.open_by_key(rep_id)
-                    ws_main = wb.sheet1
+
+                    # Kaynak: ilgili dil+ay sekmesinin kendisi (ör. "ENG Temmuz 2026").
+                    # "Rapor" sekmeleri asla kaynak/hedef olarak kullanılmaz.
+                    ws_main = None
+                    active_ws_title = st.session_state.get("active_report_ws_title")
+                    if active_ws_title and "rapor" not in str(active_ws_title).strip().lower():
+                        for w in wb.worksheets():
+                            if w.title.strip().lower() == str(active_ws_title).strip().lower():
+                                ws_main = w
+                                break
+                    if ws_main is None:
+                        for w in wb.worksheets():
+                            title_clean = w.title.strip().lower()
+                            if "rapor" in title_clean:
+                                continue
+                            if lang_for_process.lower() in title_clean and target_month_to_process.lower() in title_clean:
+                                ws_main = w
+                                break
+                    if ws_main is None:
+                        st.error(f"❌ '{lang_for_process} {target_month_to_process}' kaynak sekmesi bulunamadı. Önce 'Raporu Çalıştır'ı çalıştırdığından emin ol.")
+                        st.stop()
 
                     selected_year_val = st.session_state.get("selected_year", 2026)
 
@@ -424,6 +460,7 @@ elif page == "📈 Yüklenecek Kişiler & Miktarlar":
                         main_ws=ws_main, 
                         target_month_name=target_month_to_process, 
                         selected_year=selected_year_val,
+                        selected_language=lang_for_process,
                         log_func=lambda m: log_msgs.append(m)
                     )
                     
