@@ -25,15 +25,56 @@ def get_available_spreadsheets(creds_input):
 
     return spreadsheets
 
+def _find_target_worksheet(wb, language, month_name, year, log_callback=print, create_if_missing=True, source_columns=None):
+    """
+    '<DİL> <Ay> <Yıl>' (örn. 'ENG Temmuz 2026') deseniyle eşleşen sekmeyi bulur.
+    'Rapor' geçen sekmelere KESİNLİKLE dokunulmaz (arama ve oluşturma dahil).
+    """
+    language_clean = str(language or "").strip().lower()
+    month_clean = str(month_name or "").strip().lower()
+    year_clean = str(year or "").strip()
+
+    candidates = [
+        ws for ws in wb.worksheets()
+        if "rapor" not in ws.title.strip().lower()
+    ]
+
+    # 1. Tam eşleşme: dil + ay + yıl hepsi sekme adında geçiyor
+    for ws in candidates:
+        title_clean = ws.title.strip().lower()
+        if language_clean in title_clean and month_clean in title_clean and year_clean in title_clean:
+            return ws
+
+    # 2. Gevşetilmiş eşleşme: sadece ay + yıl (dil etiketi farklı yazılmış olabilir)
+    for ws in candidates:
+        title_clean = ws.title.strip().lower()
+        if month_clean in title_clean and year_clean in title_clean:
+            log_callback(f"⚠️ '{language} {month_name} {year}' tam eşleşmedi, '[{ws.title}]' sekmesi kullanılıyor.")
+            return ws
+
+    if not create_if_missing:
+        return None
+
+    # 3. Hiçbiri yoksa, bu ay için yeni sekme oluştur (Rapor sekmelerine asla dokunulmaz)
+    new_title = f"{language} {month_name} {year}"
+    log_callback(f"🆕 '{new_title}' sekmesi bulunamadı, yeni oluşturuluyor...")
+    new_ws = wb.add_worksheet(title=new_title, rows="1000", cols=str(max(len(source_columns or []), 10)))
+    if source_columns:
+        new_ws.update('A1', [list(source_columns)])
+    return new_ws
+
+
 class QAReportWorker:
-    def __init__(self, creds_input, source_id, report_id, selected_year, selected_month, log_callback=print, progress_callback=None):
+    def __init__(self, creds_input, source_id, report_id, selected_year, selected_month, selected_language="ENG", log_callback=print, progress_callback=None):
         self.creds_input = creds_input
         self.source_id = source_id
         self.report_id = report_id
         self.selected_year = selected_year
         self.selected_month = selected_month
+        self.selected_language = selected_language
         self.log_callback = log_callback
         self.progress_callback = progress_callback or (lambda v: None)
+        self.used_worksheet_title = None
 
     def _get_client(self):
         scopes = [
@@ -65,6 +106,8 @@ class QAReportWorker:
             
             if not src_ws:
                 src_ws = src_wb.sheet1
+
+            self.log_callback(f"📄 Kaynak sekme: [{src_ws.title}]")
 
             self.progress_callback(30)
 
@@ -103,7 +146,19 @@ class QAReportWorker:
             # Hedef dosyaya yaz
             self.log_callback("💾 Hedef rapora veriler yazılıyor...")
             rep_wb = client.open_by_key(self.report_id)
-            rep_ws = rep_wb.sheet1
+
+            rep_ws = _find_target_worksheet(
+                rep_wb,
+                language=self.selected_language,
+                month_name=self.selected_month,
+                year=self.selected_year,
+                log_callback=self.log_callback,
+                create_if_missing=True,
+                source_columns=df.columns.tolist()
+            )
+
+            self.used_worksheet_title = rep_ws.title
+            self.log_callback(f"📄 Hedef sekme: [{rep_ws.title}]")
 
             df_to_write = df.fillna("")
             data_to_write = [df_to_write.columns.tolist()] + df_to_write.astype(str).values.tolist()
@@ -120,31 +175,22 @@ class QAReportWorker:
             return None
 
 
-def process_za_and_insert_month(main_ws, target_month_name, selected_year=2026, log_func=print):
+def process_za_and_insert_month(main_ws, target_month_name, selected_year=2026, selected_language="ENG", log_func=print):
     try:
         wb = main_ws.spreadsheet
-        all_worksheets = wb.worksheets()
-        sheet_titles = [ws.title for ws in all_worksheets]
-        
-        target_ws = None
-        target_month_clean = str(target_month_name).strip().lower()
-        target_year_clean = str(selected_year).strip()
 
-        # 1. Sekmeyi bul (Örn: "ENG Temmuz 2026")
-        for ws in all_worksheets:
-            title_clean = ws.title.lower()
-            if target_month_clean in title_clean and target_year_clean in title_clean:
-                target_ws = ws
-                break
+        target_ws = _find_target_worksheet(
+            wb,
+            language=selected_language,
+            month_name=target_month_name,
+            year=selected_year,
+            log_callback=log_func,
+            create_if_missing=False
+        )
 
         if not target_ws:
-            for ws in all_worksheets:
-                if target_month_clean in ws.title.lower():
-                    target_ws = ws
-                    break
-
-        if not target_ws:
-            log_func(f"❌ '{target_month_name} {selected_year}' sekmesi bulunamadı! Mevcut sekmeler: {', '.join(sheet_titles[:4])}...")
+            other_titles = [ws.title for ws in wb.worksheets() if "rapor" not in ws.title.strip().lower()]
+            log_func(f"❌ '{selected_language} {target_month_name} {selected_year}' sekmesi bulunamadı! Mevcut sekmeler: {', '.join(other_titles[:6])}...")
             return False
 
         log_func(f"🎯 Hedef sekme bulundu: [{target_ws.title}]")
@@ -181,7 +227,8 @@ def process_za_and_insert_month(main_ws, target_month_name, selected_year=2026, 
             target_ws.update(rows_to_write, 'A1')
         else:
             headers = [str(h).strip() for h in target_rows[0]]
-            
+            target_month_clean = str(target_month_name).strip().lower()
+
             col_idx = -1
             for i, h in enumerate(headers):
                 if target_month_clean in h.lower() or "za" in h.lower() or "toplam" in h.lower():
