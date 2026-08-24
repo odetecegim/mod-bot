@@ -1,3 +1,4 @@
+import time
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
@@ -28,8 +29,8 @@ def get_available_spreadsheets(creds_input):
 
 def _find_target_worksheet(wb, language, month_name, year, log_callback=print, create_if_missing=True, source_columns=None):
     """
-    '<DİL> <Ay> <Yıl>' (örn. 'ENG Temmuz 2026') deseniyle eşleşen sekmeyi bulur.
-    'Rapor' geçen sekmelere KESİNLİKLE dokunulmaz (arama ve oluşturma dahil).
+    '<DİL> <Ay> <Yıl>' deseniyle eşleşen sekmeyi bulur.
+    'Rapor' geçen sekmelere KESİNLİKLE dokunulmaz.
     """
     language_clean = str(language or "").strip().lower()
     month_clean = str(month_name or "").strip().lower()
@@ -40,13 +41,13 @@ def _find_target_worksheet(wb, language, month_name, year, log_callback=print, c
         if "rapor" not in ws.title.strip().lower()
     ]
 
-    # 1. Tam eşleşme: dil + ay + yıl hepsi sekme adında geçiyor
+    # 1. Tam eşleşme
     for ws in candidates:
         title_clean = ws.title.strip().lower()
         if language_clean in title_clean and month_clean in title_clean and year_clean in title_clean:
             return ws
 
-    # 2. Gevşetilmiş eşleşme: sadece ay + yıl
+    # 2. Gevşetilmiş eşleşme (Sadece Ay + Yıl)
     for ws in candidates:
         title_clean = ws.title.strip().lower()
         if month_clean in title_clean and year_clean in title_clean:
@@ -56,12 +57,12 @@ def _find_target_worksheet(wb, language, month_name, year, log_callback=print, c
     if not create_if_missing:
         return None
 
-    # 3. Hiçbiri yoksa yeni sekme oluştur
+    # 3. Yeni sekme oluştur
     new_title = f"{language} {month_name} {year}"
     log_callback(f"🆕 '{new_title}' sekmesi bulunamadı, yeni oluşturuluyor...")
     new_ws = wb.add_worksheet(title=new_title, rows="1000", cols=str(max(len(source_columns or []), 10)))
     if source_columns:
-        new_ws.update('A1', [list(source_columns)])
+        new_ws.update(range_name='A1', values=[list(source_columns)])
     return new_ws
 
 
@@ -97,15 +98,12 @@ class QAReportWorker:
             self.log_callback("📂 Kaynak dosya açılıyor...")
             src_wb = client.open_by_key(self.source_id)
             
-            # =========================================================================
-            # 👁️ 1. YALNIZCA AÇIK (GİZLİ OLMAYAN) SEKMELERİ TARAMA VE SAYMA
-            # =========================================================================
             user_report_counts = {}
             visible_sheet_count = 0
 
             for ws in src_wb.worksheets():
-                # Google Sheets Metadata üzerinden gizli sekme (hidden: True) kontrolü
-                is_hidden = ws._properties.get('hidden', False)
+                # gspread uyumluluğu (is_hidden / _properties kontrolü)
+                is_hidden = getattr(ws, 'is_hidden', ws._properties.get('hidden', False))
                 if is_hidden:
                     self.log_callback(f"🙈 Gizli sekme atlandı: [{ws.title}]")
                     continue
@@ -121,17 +119,15 @@ class QAReportWorker:
                     headers = [str(h).strip() for h in vals[0]]
                     df_sheet = pd.DataFrame(vals[1:], columns=headers)
                     
-                    # Kullanıcı / Nick Sütununu Tespit Et
                     nick_col = None
                     for c in df_sheet.columns:
-                        if c.lower() in ["nick", "personel", "kullanıcı", "ad soyad", "qa_member"]:
+                        if str(c).lower() in ["nick", "personel", "kullanıcı", "ad soyad", "qa_member"]:
                             nick_col = c
                             break
                     if not nick_col and len(df_sheet.columns) > 0:
                         nick_col = df_sheet.columns[0]
                         
                     if nick_col:
-                        # Sekme içerisindeki kullanıcı bazlı satır/rapor sayılarını topla
                         counts = df_sheet[nick_col].astype(str).str.strip().value_counts()
                         for user_name, count in counts.items():
                             if user_name and user_name.lower() not in ['nan', '', 'none', 'nick']:
@@ -142,9 +138,6 @@ class QAReportWorker:
             self.log_callback(f"📊 Toplam {visible_sheet_count} açık sekmeden {len(user_report_counts)} personelin rapor sayıları toplandı.")
             self.progress_callback(40)
 
-            # =========================================================================
-            # 🎯 2. HEDEF (GLOBAL PERF) DOSYADAN ŞABLONU / İSİMLERİ ALMA
-            # =========================================================================
             self.log_callback("💾 Hedef (Global Perf) dosyası açılıyor...")
             rep_wb = client.open_by_key(self.report_id)
 
@@ -167,20 +160,17 @@ class QAReportWorker:
                 headers = [str(h).strip() for h in target_vals[0]]
                 df = pd.DataFrame(target_vals[1:], columns=headers)
             else:
-                # Eger hedef sekme tamamen boşsa varsayılan sütun yapısını kur
                 headers = ["Nick", "Zula Pass", "0 Kul. TESTİ", "Genel Check", "Hata bildirimi", "Öneri Bildirimi", "Discord PC", "Hakemlik", "Diğer/Kanaat", "Toplam", "ZA"]
                 df = pd.DataFrame(columns=headers)
 
-            # Target Tablosunda Kullanıcı Kolonunu Bul
             user_col = None
             for c in df.columns:
-                if c.lower() in ["nick", "personel", "kullanıcı", "ad soyad"]:
+                if str(c).lower() in ["nick", "personel", "kullanıcı", "ad soyad"]:
                     user_col = c
                     break
             if not user_col:
                 user_col = df.columns[0] if len(df.columns) > 0 else "Nick"
 
-            # Eğer kaynak açık sekmelerde yeni isimler varsa ve hedefte yoksa target'a ekle
             existing_users = set(df[user_col].astype(str).str.strip().tolist()) if not df.empty else set()
             for u_name in user_report_counts.keys():
                 if u_name not in existing_users:
@@ -188,13 +178,9 @@ class QAReportWorker:
                     new_row[user_col] = u_name
                     df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
 
-            # =========================================================================
-            # 🧮 3. AÇIK SEKMELERDEN GELEN RAPOR SAYILARINI İLGİLİ SÜTUNA İŞLEME
-            # =========================================================================
-            # Sayılan rapor miktarlarının yazılacağı sütun (Örn: 'Hata bildirimi' veya 'Genel Check')
             report_col = None
             for col in df.columns:
-                if any(k in col.lower() for k in ["hata", "rapor", "check"]):
+                if any(k in str(col).lower() for k in ["hata", "rapor", "check"]):
                     report_col = col
                     break
             if not report_col:
@@ -202,15 +188,11 @@ class QAReportWorker:
                 if report_col not in df.columns:
                     df[report_col] = 0
 
-            # Isimlerin karşısına sayılan rapor miktarlarını yerleştir
             for idx, row in df.iterrows():
                 u_name = str(row[user_col]).strip()
                 if u_name in user_report_counts:
                     df.at[idx, report_col] = user_report_counts[u_name]
 
-            # =========================================================================
-            # 📐 4. PUAN / ZA FORMÜL HESAPLAMALARI VE YAZMA
-            # =========================================================================
             score_cols = [
                 "Zula Pass", "0 Kul. TESTİ", "Genel Check", "Hata bildirimi", 
                 "Öneri Bildirimi", "Discord PC", "Hakemlik", "Diğer/Kanaat"
@@ -230,12 +212,11 @@ class QAReportWorker:
 
             self.progress_callback(85)
 
-            # Hedef Sekmeyi Temizle ve Güncel Veriyi Yaz
             df_to_write = df.fillna("")
             data_to_write = [df_to_write.columns.tolist()] + df_to_write.astype(str).values.tolist()
 
             rep_ws.clear()
-            rep_ws.update(data_to_write, 'A1')
+            rep_ws.update(range_name='A1', values=data_to_write)
 
             self.progress_callback(100)
             self.log_callback(f"✅ [{rep_ws.title}] sekmesine açık sekmelerin rapor sayıları başarıyla işlendi!")
@@ -266,7 +247,6 @@ def process_za_and_insert_month(main_ws, target_month_name, selected_year=2026, 
 
         log_func(f"🎯 Hedef sekme bulundu: [{target_ws.title}]")
 
-        # 2. Ana tablodan veri al
         raw_main = main_ws.get_all_values()
         if not raw_main or len(raw_main) < 2:
             log_func("⚠️ Ana çalışma sayfasında işlenecek veri bulunamadı!")
@@ -285,7 +265,6 @@ def process_za_and_insert_month(main_ws, target_month_name, selected_year=2026, 
 
         za_col = "ZA" if "ZA" in df_main.columns else df_main.columns[-1]
 
-        # 3. Sekmeye Veri Yaz
         target_rows = target_ws.get_all_values()
         
         if not target_rows:
@@ -295,7 +274,7 @@ def process_za_and_insert_month(main_ws, target_month_name, selected_year=2026, 
                 rows_to_write.append([str(row[user_col]), str(row[za_col])])
             
             target_ws.clear()
-            target_ws.update(rows_to_write, 'A1')
+            target_ws.update(range_name='A1', values=rows_to_write)
         else:
             headers = [str(h).strip() for h in target_rows[0]]
             target_month_clean = str(target_month_name).strip().lower()
@@ -314,7 +293,8 @@ def process_za_and_insert_month(main_ws, target_month_name, selected_year=2026, 
             
             updated_rows = [headers]
             for row in target_rows[1:]:
-                if not row: continue
+                if not row: 
+                    continue
                 u_name = str(row[0]).strip()
                 
                 while len(row) < len(headers):
@@ -326,7 +306,7 @@ def process_za_and_insert_month(main_ws, target_month_name, selected_year=2026, 
                 updated_rows.append(row)
 
             target_ws.clear()
-            target_ws.update(updated_rows, 'A1')
+            target_ws.update(range_name='A1', values=updated_rows)
 
         log_func(f"✅ Veriler başarıyla [{target_ws.title}] sekmesine yazıldı!")
         return True
