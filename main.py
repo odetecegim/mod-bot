@@ -46,6 +46,15 @@ def get_user_passwords():
     return {}
 
 
+def get_user_from_password(password, user_passwords):
+    matched_users = [
+        user_name
+        for user_name, expected_password in user_passwords.items()
+        if hmac.compare_digest(password, str(expected_password))
+    ]
+    return matched_users[0] if len(matched_users) == 1 else None
+
+
 def audit_log(user_name, action, details="", status="Başarılı"):
     audit_spreadsheet_id = st.secrets.get("AUDIT_LOG_SHEET_ID", DEFAULT_AUDIT_LOG_SHEET_ID)
     append_audit_log(
@@ -69,13 +78,12 @@ if "authenticated_user" not in st.session_state:
 if not st.session_state.authenticated_user:
     st.subheader("🔐 Kullanıcı Girişi")
     with st.form("login_form"):
-        login_user_name = st.text_input("Kullanıcı adı")
         login_password = st.text_input("Şifre", type="password")
         login_submit = st.form_submit_button("Giriş Yap", use_container_width=True)
     if login_submit:
-        expected_password = str(user_passwords.get(login_user_name.strip(), ""))
-        if expected_password and hmac.compare_digest(login_password, expected_password):
-            st.session_state.authenticated_user = login_user_name.strip()
+        matched_user = get_user_from_password(login_password, user_passwords)
+        if matched_user:
+            st.session_state.authenticated_user = matched_user
             try:
                 audit_log(st.session_state.authenticated_user, "Giriş yaptı")
             except Exception as error:
@@ -84,7 +92,7 @@ if not st.session_state.authenticated_user:
             st.rerun()
         else:
             try:
-                audit_log(login_user_name.strip() or "Bilinmeyen", "Başarısız giriş denemesi", status="Başarısız")
+                audit_log("Bilinmeyen", "Başarısız giriş denemesi", status="Başarısız")
             except Exception:
                 pass
             st.error("❌ Kullanıcı adı veya şifre hatalı.")
