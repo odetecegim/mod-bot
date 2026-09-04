@@ -50,7 +50,6 @@ def audit_log(user_name, action, details="", status="Başarılı"):
     audit_spreadsheet_id = st.secrets.get("AUDIT_LOG_SHEET_ID", DEFAULT_AUDIT_LOG_SHEET_ID)
     append_audit_log(
         active_json_path,
-        str(st.secrets["AUDIT_LOG_SHEET_ID"]),
         str(audit_spreadsheet_id),
         str(st.secrets.get("AUDIT_LOG_WORKSHEET", "İşlem Logları")),
         user_name,
@@ -64,10 +63,6 @@ user_passwords = get_user_passwords()
 if not user_passwords:
     st.error("❌ Kullanıcı hesapları ayarlanmamış. Streamlit Secrets'a USERS ekleyin.")
     st.stop()
-if "AUDIT_LOG_SHEET_ID" not in st.secrets:
-    st.error("❌ Log tablosu ayarlanmamış. Streamlit Secrets'a AUDIT_LOG_SHEET_ID ekleyin.")
-    st.stop()
-
 if "authenticated_user" not in st.session_state:
     st.session_state.authenticated_user = None
 
