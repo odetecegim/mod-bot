@@ -74,15 +74,14 @@ def _matches_period(worksheet, month_name, year, language=None):
 
 
 def get_available_spreadsheets(creds_input):
+    """Erişilebilir tabloları döndürür. Bir hata olursa sessizce yutmak yerine
+    fırlatır, böylece arayüz gerçek nedeni kullanıcıya gösterebilir."""
     spreadsheets = {"all": {}}
-    try:
-        client = _authorized_client(creds_input)
-        for spreadsheet in client.openall():
-            if _is_internal_log_name(spreadsheet.title):
-                continue
-            spreadsheets["all"][spreadsheet.title] = spreadsheet.id
-    except Exception as error:
-        print(f"Spreadsheet listeleme hatası: {error}")
+    client = _authorized_client(creds_input)
+    for spreadsheet in client.openall():
+        if _is_internal_log_name(spreadsheet.title):
+            continue
+        spreadsheets["all"][spreadsheet.title] = spreadsheet.id
     return spreadsheets
 
 
