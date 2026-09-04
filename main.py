@@ -35,10 +35,12 @@ if not active_json_path:
     st.stop()
 
 
-def get_admin_passwords():
-    if "ADMIN_USERS" not in st.secrets:
-        return {}
-    return dict(st.secrets["ADMIN_USERS"])
+def get_user_passwords():
+    if "USERS" in st.secrets:
+        return dict(st.secrets["USERS"])
+    if "ADMIN_USERS" in st.secrets:
+        return dict(st.secrets["ADMIN_USERS"])
+    return {}
 
 
 def audit_log(user_name, action, details="", status="Başarılı"):
@@ -53,9 +55,9 @@ def audit_log(user_name, action, details="", status="Başarılı"):
     )
 
 
-admin_passwords = get_admin_passwords()
-if not admin_passwords:
-    st.error("❌ Yönetici hesapları ayarlanmamış. Streamlit Secrets'a ADMIN_USERS ekleyin.")
+user_passwords = get_user_passwords()
+if not user_passwords:
+    st.error("❌ Kullanıcı hesapları ayarlanmamış. Streamlit Secrets'a USERS ekleyin.")
     st.stop()
 if "AUDIT_LOG_SHEET_ID" not in st.secrets:
     st.error("❌ Log tablosu ayarlanmamış. Streamlit Secrets'a AUDIT_LOG_SHEET_ID ekleyin.")
@@ -65,13 +67,13 @@ if "authenticated_user" not in st.session_state:
     st.session_state.authenticated_user = None
 
 if not st.session_state.authenticated_user:
-    st.subheader("🔐 Yönetici Girişi")
+    st.subheader("🔐 Kullanıcı Girişi")
     with st.form("login_form"):
         login_user_name = st.text_input("Kullanıcı adı")
         login_password = st.text_input("Şifre", type="password")
         login_submit = st.form_submit_button("Giriş Yap", use_container_width=True)
     if login_submit:
-        expected_password = str(admin_passwords.get(login_user_name.strip(), ""))
+        expected_password = str(user_passwords.get(login_user_name.strip(), ""))
         if expected_password and hmac.compare_digest(login_password, expected_password):
             st.session_state.authenticated_user = login_user_name.strip()
             try:
@@ -89,7 +91,7 @@ if not st.session_state.authenticated_user:
     st.stop()
 
 current_user = st.session_state.authenticated_user
-st.sidebar.success(f"Giriş yapan yönetici: {current_user}")
+st.sidebar.success(f"Giriş yapan kullanıcı: {current_user}")
 if st.sidebar.button("Çıkış Yap"):
     try:
         audit_log(current_user, "Çıkış yaptı")
