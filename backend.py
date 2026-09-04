@@ -25,6 +25,10 @@ def _is_hidden(worksheet):
     return bool(getattr(worksheet, "_properties", {}).get("hidden", False))
 
 
+def _is_internal_log_name(title):
+    return _normalized(title) in {"modbot.log", "modbot log"}
+
+
 def _find_column(columns, names=(), contains=()):
     for column in columns:
         normalized = _normalized(column)
@@ -39,6 +43,21 @@ def _email_column(columns):
         names={"email", "e-mail", "e posta", "e-posta", "eposta", "mail"},
         contains=("email", "e-posta", "eposta"),
     )
+
+
+def _unique_headers(headers):
+    used_headers = set()
+    unique_headers = []
+    for index, header in enumerate(headers, start=1):
+        base_header = str(header).strip() or f"Adsız Sütun {index}"
+        candidate = base_header
+        duplicate_number = 2
+        while candidate in used_headers:
+            candidate = f"{base_header} ({duplicate_number})"
+            duplicate_number += 1
+        used_headers.add(candidate)
+        unique_headers.append(candidate)
+    return unique_headers
 
 
 def _month_terms(month_name):
@@ -59,6 +78,8 @@ def get_available_spreadsheets(creds_input):
     try:
         client = _authorized_client(creds_input)
         for spreadsheet in client.openall():
+            if _is_internal_log_name(spreadsheet.title):
+                continue
             spreadsheets["all"][spreadsheet.title] = spreadsheet.id
     except Exception as error:
         print(f"Spreadsheet listeleme hatası: {error}")
@@ -79,26 +100,33 @@ def _authorized_client(creds_input):
 
 def get_visible_worksheet_titles(creds_input, spreadsheet_id):
     workbook = _authorized_client(creds_input).open_by_key(spreadsheet_id)
-    return [worksheet.title for worksheet in workbook.worksheets() if not _is_hidden(worksheet)]
+    return [
+        worksheet.title
+        for worksheet in workbook.worksheets()
+        if not _is_hidden(worksheet) and not _is_internal_log_name(worksheet.title)
+    ]
 
 
 def read_visible_worksheet(creds_input, spreadsheet_id, worksheet_title):
     workbook = _authorized_client(creds_input).open_by_key(spreadsheet_id)
     worksheet = workbook.worksheet(worksheet_title)
-    if _is_hidden(worksheet):
-        raise ValueError("Gizli sekmeler araç içinden görüntülenemez veya düzenlenemez.")
+    if _is_hidden(worksheet) or _is_internal_log_name(worksheet.title):
+        raise ValueError("Bu sekme araç içinden görüntülenemez veya düzenlenemez.")
     values = worksheet.get_all_values(value_render_option="FORMULA")
     if not values:
         return pd.DataFrame()
-    headers = [str(header).strip() for header in values[0]]
-    return pd.DataFrame(values[1:], columns=headers)
+    original_headers = [str(header).strip() for header in values[0]]
+    headers = _unique_headers(original_headers)
+    data = pd.DataFrame(values[1:], columns=headers)
+    data.attrs["renamed_headers"] = headers != original_headers
+    return data
 
 
 def update_visible_worksheet(creds_input, spreadsheet_id, worksheet_title, data):
     workbook = _authorized_client(creds_input).open_by_key(spreadsheet_id)
     worksheet = workbook.worksheet(worksheet_title)
-    if _is_hidden(worksheet):
-        raise ValueError("Gizli sekmeler araç içinden düzenlenemez.")
+    if _is_hidden(worksheet) or _is_internal_log_name(worksheet.title):
+        raise ValueError("Bu sekme araç içinden düzenlenemez.")
     worksheet.clear()
     worksheet.update(
         range_name="A1",
