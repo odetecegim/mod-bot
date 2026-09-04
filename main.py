@@ -15,6 +15,9 @@ from backend import (
 )
 
 
+DEFAULT_AUDIT_LOG_SHEET_ID = "1WMyChax15-VD7o-39FYVcA10NDYwi_M_7zpIn0fFJOE"
+
+
 st.set_page_config(page_title="QA Raporlama Paneli", page_icon="📊", layout="centered")
 st.title("📊 QA Görev Raporlama Paneli")
 st.caption("Açık sekmelerdeki e-posta adreslerini seçilen ay ve yıla göre eşleştirip güncelleyin.")
@@ -44,9 +47,11 @@ def get_user_passwords():
 
 
 def audit_log(user_name, action, details="", status="Başarılı"):
+    audit_spreadsheet_id = st.secrets.get("AUDIT_LOG_SHEET_ID", DEFAULT_AUDIT_LOG_SHEET_ID)
     append_audit_log(
         active_json_path,
         str(st.secrets["AUDIT_LOG_SHEET_ID"]),
+        str(audit_spreadsheet_id),
         str(st.secrets.get("AUDIT_LOG_WORKSHEET", "İşlem Logları")),
         user_name,
         action,
