@@ -1,101 +1,204 @@
-import os
 import json
-import streamlit as st
-from backend import QAReportWorker, get_available_spreadsheets
+import os
+import hmac
 
-# Sayfa Yapılandırması
-st.set_page_config(
-    page_title="QA Raporlama Paneli",
-    page_icon="📊",
-    layout="centered"
+import streamlit as st
+
+from backend import (
+    QAReportWorker,
+    get_available_spreadsheets,
+    get_member_za_summary,
+    get_visible_worksheet_titles,
+    read_visible_worksheet,
+    update_visible_worksheet,
+    append_audit_log,
 )
 
-st.title("📊 QA Görev Raporlama Paneli")
-st.caption("Google Sheets verilerini seçilen Ay ve Yıl'a göre otomatik eşleştirin ve güncelleyin.")
 
-# --- GOOGLE CREDENTIALS YÖNETİMİ ---
+st.set_page_config(page_title="QA Raporlama Paneli", page_icon="📊", layout="centered")
+st.title("📊 QA Görev Raporlama Paneli")
+st.caption("Açık sekmelerdeki e-posta adreslerini seçilen ay ve yıla göre eşleştirip güncelleyin.")
+
+
 def setup_credentials():
     if "GOOGLE_CREDENTIALS" in st.secrets:
-        # Streamlit Cloud üzerinde Secrets kullanılıyorsa temp json oluştur
-        creds_dict = dict(st.secrets["GOOGLE_CREDENTIALS"])
-        with open("temp_credentials.json", "w") as f:
-            json.dump(creds_dict, f)
+        credentials = dict(st.secrets["GOOGLE_CREDENTIALS"])
+        with open("temp_credentials.json", "w") as credential_file:
+            json.dump(credentials, credential_file)
         return "temp_credentials.json"
-    elif os.path.exists("credentials.json"):
-        return "credentials.json"
-    else:
-        return None
+    return "credentials.json" if os.path.exists("credentials.json") else None
+
 
 active_json_path = setup_credentials()
-
 if not active_json_path:
-    st.error("❌ 'credentials.json' dosyası bulunamadı! Lütfen yerel dizine ekleyin veya Streamlit Secrets alanına tanımlayın.")
+    st.error("❌ 'credentials.json' dosyası bulunamadı!")
     st.stop()
 
-# --- TABLOLARI LİSTELE (Önbellekli & Güvenli) ---
+
+def get_admin_passwords():
+    if "ADMIN_USERS" not in st.secrets:
+        return {}
+    return dict(st.secrets["ADMIN_USERS"])
+
+
+def audit_log(user_name, action, details="", status="Başarılı"):
+    append_audit_log(
+        active_json_path,
+        str(st.secrets["AUDIT_LOG_SHEET_ID"]),
+        str(st.secrets.get("AUDIT_LOG_WORKSHEET", "İşlem Logları")),
+        user_name,
+        action,
+        details,
+        status,
+    )
+
+
+admin_passwords = get_admin_passwords()
+if not admin_passwords:
+    st.error("❌ Yönetici hesapları ayarlanmamış. Streamlit Secrets'a ADMIN_USERS ekleyin.")
+    st.stop()
+if "AUDIT_LOG_SHEET_ID" not in st.secrets:
+    st.error("❌ Log tablosu ayarlanmamış. Streamlit Secrets'a AUDIT_LOG_SHEET_ID ekleyin.")
+    st.stop()
+
+if "authenticated_user" not in st.session_state:
+    st.session_state.authenticated_user = None
+
+if not st.session_state.authenticated_user:
+    st.subheader("🔐 Yönetici Girişi")
+    with st.form("login_form"):
+        login_user_name = st.text_input("Kullanıcı adı")
+        login_password = st.text_input("Şifre", type="password")
+        login_submit = st.form_submit_button("Giriş Yap", use_container_width=True)
+    if login_submit:
+        expected_password = str(admin_passwords.get(login_user_name.strip(), ""))
+        if expected_password and hmac.compare_digest(login_password, expected_password):
+            st.session_state.authenticated_user = login_user_name.strip()
+            try:
+                audit_log(st.session_state.authenticated_user, "Giriş yaptı")
+            except Exception as error:
+                st.error(f"❌ Giriş logu yazılamadı: {error}")
+                st.stop()
+            st.rerun()
+        else:
+            try:
+                audit_log(login_user_name.strip() or "Bilinmeyen", "Başarısız giriş denemesi", status="Başarısız")
+            except Exception:
+                pass
+            st.error("❌ Kullanıcı adı veya şifre hatalı.")
+    st.stop()
+
+current_user = st.session_state.authenticated_user
+st.sidebar.success(f"Giriş yapan yönetici: {current_user}")
+if st.sidebar.button("Çıkış Yap"):
+    try:
+        audit_log(current_user, "Çıkış yaptı")
+    except Exception as error:
+        st.warning(f"Çıkış logu yazılamadı: {error}")
+    finally:
+        st.session_state.authenticated_user = None
+        st.rerun()
+
+
 @st.cache_data(ttl=600)
-def fetch_spreadsheets(json_path):
-    return get_available_spreadsheets(json_path)
+def fetch_spreadsheets(credentials_path):
+    return get_available_spreadsheets(credentials_path)
+
 
 try:
     with st.spinner("Google Drive tabloları yükleniyor..."):
-        spreadsheet_dict = fetch_spreadsheets(active_json_path)
-        sheet_names = list(spreadsheet_dict.keys())
-except Exception as e:
-    st.error(f"Google Drive bağlantı hatası: {e}")
+        spreadsheet_dict = fetch_spreadsheets(active_json_path)["all"]
+except Exception as error:
+    st.error(f"Google Drive bağlantı hatası: {error}")
     st.stop()
 
-# --- FORM ARAYÜZÜ ---
+sheet_names = list(spreadsheet_dict)
+
+with st.expander("✏️ Açık Google Sheets Sekmesini Canlı Düzenle"):
+    st.caption("Gizli sekmeler listelenmez. Kaydet düğmesi, yaptığınız değişiklikleri doğrudan seçilen sekmeye yazar.")
+    editor_spreadsheet_name = st.selectbox("Düzenlenecek tablo", sheet_names, key="editor_spreadsheet")
+    try:
+        editor_spreadsheet_id = spreadsheet_dict[editor_spreadsheet_name]
+        visible_worksheets = get_visible_worksheet_titles(active_json_path, editor_spreadsheet_id)
+        if not visible_worksheets:
+            st.info("Bu tabloda açık sekme bulunamadı.")
+        else:
+            editor_worksheet_name = st.selectbox("Açık sekme", visible_worksheets, key=f"worksheet_{editor_spreadsheet_id}")
+            editor_data = read_visible_worksheet(active_json_path, editor_spreadsheet_id, editor_worksheet_name)
+            viewed_editor_key = f"viewed_{editor_spreadsheet_id}_{editor_worksheet_name}"
+            if not st.session_state.get(viewed_editor_key):
+                audit_log(current_user, "Sekme görüntüledi", f"{editor_spreadsheet_name} / {editor_worksheet_name}")
+                st.session_state[viewed_editor_key] = True
+            updated_editor_data = st.data_editor(
+                editor_data,
+                num_rows="dynamic",
+                hide_index=True,
+                use_container_width=True,
+                key=f"data_editor_{editor_spreadsheet_id}_{editor_worksheet_name}",
+            )
+            if st.button("💾 Değişiklikleri Canlı Kaydet", key=f"save_{editor_spreadsheet_id}_{editor_worksheet_name}"):
+                update_visible_worksheet(active_json_path, editor_spreadsheet_id, editor_worksheet_name, updated_editor_data)
+                audit_log(current_user, "Sekme düzenledi", f"{editor_spreadsheet_name} / {editor_worksheet_name}")
+                st.success(f"✅ [{editor_worksheet_name}] sekmesindeki değişiklikler kaydedildi.")
+    except Exception as error:
+        try:
+            audit_log(current_user, "Sekme işlemi hatası", str(error), "Başarısız")
+        except Exception:
+            pass
+        st.error(f"❌ Sekme düzenleme hatası: {error}")
+
 with st.form("qa_form"):
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        source_name = st.selectbox("Kaynak Tablo (Source Sheet)", options=sheet_names)
-    with col2:
-        report_name = st.selectbox("Rapor Tablosu (Report Sheet)", options=sheet_names)
-
-    col3, col4, col5 = st.columns(3)
-    
-    with col3:
-        selected_lang = st.selectbox("Dil", ["Tümü", "ENG", "ESP", "POR", "TR"])
-    with col4:
-        months = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
-        selected_month = st.selectbox("Ay", months, index=6) # Varsayılan: Temmuz
-    with col5:
+    source_name, report_name = st.columns(2)
+    with source_name:
+        selected_source = st.selectbox("Kaynak Tablo", options=sheet_names)
+    with report_name:
+        selected_report = st.selectbox("Rapor Tablosu", options=sheet_names)
+    language, month, year = st.columns(3)
+    with language:
+        selected_language = st.selectbox("Dil", ["Tümü", "ENG", "ESP", "POR", "TR"])
+    with month:
+        selected_month = st.selectbox("Ay", ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"], index=6)
+    with year:
         selected_year = st.selectbox("Yıl", ["2025", "2026", "2027"], index=1)
-
     submit_button = st.form_submit_button("🚀 Raporu Güncelle", use_container_width=True)
 
-# --- İŞLEM BAŞLATMA VE LOG EKRANI ---
+
 if submit_button:
-    source_id = spreadsheet_dict[source_name]
-    report_id = spreadsheet_dict[report_name]
-
     progress_bar = st.progress(0)
-    status_text = st.empty()
-    log_box = st.code("> İşlem başlatıldı...\n", language="bash")
+    log_box = st.code("> İşlem başlatıldı...\n", language="text")
+    logs = []
 
-    logs_list = []
-
-    def log_callback(msg):
-        logs_list.append(f"> {msg}")
-        log_box.code("\n".join(logs_list), language="bash")
-
-    def progress_callback(val):
-        progress_bar.progress(val)
+    def log_callback(message):
+        logs.append(f"> {message}")
+        log_box.code("\n".join(logs), language="text")
 
     try:
+        audit_log(current_user, "Rapor güncelleme başlattı", f"{selected_month} {selected_year} / {selected_language}")
         worker = QAReportWorker(
-            json_path=active_json_path,
-            source_id=source_id,
-            report_id=report_id,
-            selected_lang=selected_lang,
+            creds_input=active_json_path,
+            source_id=spreadsheet_dict[selected_source],
+            report_id=spreadsheet_dict[selected_report],
             selected_year=selected_year,
             selected_month=selected_month,
+            selected_language=selected_language,
             log_callback=log_callback,
-            progress_callback=progress_callback
+            progress_callback=progress_bar.progress,
         )
-        worker.process()
-        st.success("✅ Rapor başarıyla güncellendi!")
-    except Exception as e:
-        st.error(f"❌ İşlem sırasında bir hata oluştu: {str(e)}")
+        report_data = worker.process()
+        if report_data is None:
+            audit_log(current_user, "Rapor güncelleme", "İşlem tamamlanamadı", "Başarısız")
+            st.error("❌ Rapor güncellenemedi; ayrıntılar işlem günlüğünde.")
+        else:
+            audit_log(current_user, "Rapor güncelledi", f"{worker.used_worksheet_title} sekmesi güncellendi")
+            st.success("✅ Rapor başarıyla güncellendi!")
+            st.subheader("👤 Aylık Oyuncu ZA Özeti")
+            member_za_summary, has_member_id_and_za = get_member_za_summary(report_data)
+            if not has_member_id_and_za:
+                st.warning("Bu rapor sekmesinde 'Member ID' veya 'ZA' sütunu bulunamadı.")
+            st.dataframe(member_za_summary, hide_index=True, use_container_width=True)
+    except Exception as error:
+        try:
+            audit_log(current_user, "Rapor güncelleme hatası", str(error), "Başarısız")
+        except Exception:
+            pass
+        st.error(f"❌ İşlem sırasında bir hata oluştu: {error}")
