@@ -119,10 +119,30 @@ try:
     with st.spinner("Google Drive tabloları yükleniyor..."):
         spreadsheet_dict = fetch_spreadsheets(active_json_path)["all"]
 except Exception as error:
-    st.error(f"Google Drive bağlantı hatası: {error}")
+    st.error(f"❌ Google Drive bağlantı hatası: {error}")
+    st.info(
+        "Kontrol edin: 1) credentials.json / GOOGLE_CREDENTIALS geçerli bir "
+        "servis hesabına mı ait, 2) Google Sheets API ve Google Drive API bu "
+        "projede etkin mi, 3) servis hesabının e-posta adresi ile en az bir "
+        "tablo paylaşıldı mı."
+    )
     st.stop()
 
 sheet_names = list(spreadsheet_dict)
+
+if not sheet_names:
+    st.error(
+        "❌ Bu servis hesabına paylaşılmış hiçbir Google Sheets tablosu bulunamadı."
+    )
+    try:
+        service_account_email = json.load(open(active_json_path)).get("client_email", "bilinmiyor")
+    except Exception:
+        service_account_email = "bilinmiyor"
+    st.info(
+        f"Çözüm: Kullanmak istediğiniz Google Sheets dosyalarını şu servis "
+        f"hesabı e-postasıyla paylaşın (Düzenleyen olarak): **{service_account_email}**"
+    )
+    st.stop()
 
 with st.expander("✏️ Açık Google Sheets Sekmesini Canlı Düzenle"):
     st.caption("Gizli sekmeler listelenmez. Kaydet düğmesi, yaptığınız değişiklikleri doğrudan seçilen sekmeye yazar.")
