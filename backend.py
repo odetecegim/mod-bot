@@ -546,9 +546,15 @@ def get_member_za_summary(data):
             member_id_column = first_column
             rename_columns[first_column] = "Member ID"
     user_column = _find_column(data.columns, names={"nick", "personel", "kullanıcı", "ad soyad"})
-    email_column = _email_column(data.columns)
+    # E-posta sütunu özetlere alınmaz: çoğunlukla boş geliyor ve listeyi gereksiz şişiriyor.
+    # Sütun sırası: Member ID > Ad Soyad > Nick > ZA
+    ad_soyad_column = _find_column(data.columns, names={"ad soyad", "ads soyad", "personel", "kullanıcı"})
+    nick_column = _find_column(data.columns, names={"nick", "nickname"})
     za_column = _find_column(data.columns, names={"za"})
-    selected_columns = [column for column in (user_column, email_column, member_id_column, za_column) if column]
+    selected_columns = []
+    for column in (member_id_column, ad_soyad_column, nick_column, user_column, za_column):
+        if column and column not in selected_columns:
+            selected_columns.append(column)
     summary = data[selected_columns].copy()
     if rename_columns:
         summary = summary.rename(columns=rename_columns)

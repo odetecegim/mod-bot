@@ -273,7 +273,8 @@ if selected_page == "📊 Aylık Perf Listesi":
                     part = summary.rename(columns={za_column: "ZA"}).copy()
                     part.insert(0, "Sekme", tab_title)
                     part["_za_sort"] = part["ZA"].map(_za_number)
-                    parts.append(part.sort_values("_za_sort", ascending=False))
+                    # Sıralama: sheet'teki satır sırası korunur (ZA'ya göre yeniden sıralanmaz).
+                    parts.append(part)
                 except Exception as error:
                     skipped.append(f"{tab_title} — {error}")
         if skipped:
@@ -305,11 +306,10 @@ if selected_page == "📊 Aylık Perf Listesi":
                 # Aynı kişi farklı sekmelerde boş e-posta/NaN olarak bölünmesin.
                 group_frame[col] = group_frame[col].fillna("").astype(str).str.strip()
             person_totals = (
-                group_frame.groupby(group_cols, dropna=False)["_za_sort"]
+                group_frame.groupby(group_cols, dropna=False, sort=False)["_za_sort"]
                 .agg(Toplam_ZA="sum", Kaç_Ay="count")
                 .reset_index()
                 .rename(columns={"Toplam_ZA": "Toplam ZA", "Kaç_Ay": "Aldığı ay"})
-                .sort_values("Toplam ZA", ascending=False)
             )
 
             total_za = sum(float(value) for value in bulk_table["_za_sort"] if value != float("-inf"))
