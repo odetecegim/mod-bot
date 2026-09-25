@@ -458,7 +458,10 @@ def read_visible_worksheet(creds_input, spreadsheet_id, worksheet_title):
     worksheet = workbook.worksheet(worksheet_title)
     if _is_hidden(worksheet) or _is_internal_log_name(worksheet.title):
         raise ValueError("Bu sekme araç içinden görüntülenemez veya düzenlenemez.")
-    values = worksheet.get_all_values(value_render_option="FORMULA")
+    # Görüntüleme için biçimlendirilmiş (hesaplanmış) değerler okunur; böylece
+    # panelde =SUM(...) gibi formüller düz metin olarak değil, gerçek sonuç olarak görünür.
+    # Formüllerin yazma sırasında korunması update_visible_worksheet içinde ayrıca ele alınır.
+    values = worksheet.get_all_values()
     if not values:
         return pd.DataFrame()
     original_headers = [str(header).strip() for header in values[0]]
@@ -469,14 +472,62 @@ def read_visible_worksheet(creds_input, spreadsheet_id, worksheet_title):
 
 
 def update_visible_worksheet(creds_input, spreadsheet_id, worksheet_title, data):
+    """Panelde düzenlenen veriyi sekmeye geri yazar.
+
+    Kritik kurallar:
+    - Kaydet anında sekmenin hem FORMULA hem de biçimlenmiş (görülen) hali taze okunur.
+    - Görüntüde değişmeyen hücrelere FORMULA hali geri yazılır; böylece
+      =SUM(...)/=(L2/2)*1000 gibi formüller asla düz metne dönüşmez.
+    - Yalnızca kullanıcının değiştirdiği hücreler yeni değer olarak yazılır.
+    - Yazma value_input_option=user_entered ile yapılır; böylece "=..." ile
+      başlayan içerik formül, sayısal içerik sayı olarak yorumlanır.
+    - Boş/tekrar eden başlıklar panelde "Adsız Sütun N" olarak gösterilir;
+      sheet'e özgün (boş) başlıklar geri yazılır, kullanıcı başlığı değiştirmediği sürece.
+    """
     workbook = _authorized_client(creds_input).open_by_key(spreadsheet_id)
     worksheet = workbook.worksheet(worksheet_title)
     if _is_hidden(worksheet) or _is_internal_log_name(worksheet.title):
         raise ValueError("Bu sekme araç içinden düzenlenemez.")
+    from gspread.utils import ValueInputOption
+
+    formulas = worksheet.get_all_values(value_render_option="FORMULA") or [[""]]
+    formatted = worksheet.get_all_values() or [[""]]
+
+    original_headers = [str(header) for header in formulas[0]]
+    display_headers = _unique_headers(original_headers)
+    data_cols = [str(column) for column in data.columns]
+    width = max(len(original_headers), len(data_cols))
+
+    out_headers = []
+    for index in range(width):
+        original = original_headers[index] if index < len(original_headers) else ""
+        display = display_headers[index] if index < len(display_headers) else original
+        edited = data_cols[index] if index < len(data_cols) else None
+        # Panelde görünen ad değişmediyse özgün başlık yazılır (boş başlık korunur).
+        out_headers.append(edited if edited is not None and edited != display else original)
+
+    data_rows = data.fillna("").astype(str).values.tolist()
+    grid = [out_headers]
+    for row_offset, row in enumerate(data_rows):
+        sheet_row = row_offset + 1
+        base_formulas = formulas[sheet_row] if sheet_row < len(formulas) else []
+        base_values = formatted[sheet_row] if sheet_row < len(formatted) else []
+        out_row = []
+        for col in range(width):
+            original_formula = str(base_formulas[col]) if col < len(base_formulas) else ""
+            seen_value = str(base_values[col]) if col < len(base_values) else ""
+            new_value = str(row[col]) if col < len(row) else ""
+            if new_value.strip() == seen_value.strip():
+                # Kullanıcı bu hücreyi değiştirmemiş → formül/değer aynen korunur.
+                out_row.append(original_formula)
+            else:
+                out_row.append(new_value)
+        grid.append(out_row)
+
     worksheet.clear()
-    worksheet.update(
-        values=[data.columns.tolist()] + data.fillna("").astype(str).values.tolist(),
-        range_name="A1",
+    worksheet.batch_update(
+        [{"range": "A1", "values": grid}],
+        value_input_option=ValueInputOption.user_entered,
     )
 
 

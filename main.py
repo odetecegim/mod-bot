@@ -166,6 +166,12 @@ def fetch_visible_worksheets(credentials_path, spreadsheet_id, filter_performanc
     return get_visible_worksheet_titles(credentials_path, spreadsheet_id, filter_performance=filter_performance)
 
 
+@st.cache_data(ttl=300)
+def fetch_worksheet_data(credentials_path, spreadsheet_id, worksheet_title):
+    """Yan panel ZA listesi için sekme verisini önbellekli okur."""
+    return read_visible_worksheet(credentials_path, spreadsheet_id, worksheet_title)
+
+
 def _default_index(options, preferred):
     return options.index(preferred) if preferred in options else 0
 
@@ -177,6 +183,57 @@ def _candidate_index(options, month_name, year):
         if str(year) in normalized and probe in normalized:
             return index
     return 0
+
+
+def _za_number(value):
+    """ZA değerini sayıya çevirir; okunamayan değerler sıralamanın en altına iner."""
+    try:
+        return float(str(value).strip().replace(",", ".").replace(" ", ""))
+    except Exception:
+        return float("-inf")
+
+
+# -------------------------------------------------------------------------
+# Yan panel: ZA sıralaması — seçili perf sekmesinde kim ne kadar ZA aldı
+# -------------------------------------------------------------------------
+st.sidebar.markdown("---")
+st.sidebar.subheader("🏆 ZA Sıralaması")
+try:
+    za_spreadsheet_name = "Global Perf Tablosu" if "Global Perf Tablosu" in sheet_names else sheet_names[0]
+    za_spreadsheet_id = spreadsheet_dict[za_spreadsheet_name]
+    za_tabs = fetch_visible_worksheets(active_json_path, za_spreadsheet_id, filter_performance=True)
+    if not za_tabs:
+        st.sidebar.info("Açık performans sekmesi bulunamadı.")
+    else:
+        now = datetime.now()
+        za_tab = st.sidebar.selectbox(
+            "Sekme",
+            za_tabs,
+            index=_candidate_index(za_tabs, MONTH_NAMES[now.month - 1], now.year),
+            key="za_sidebar_tab",
+            help="Global Perf Tablosu'ndaki açık performans sekmeleri listelenir.",
+        )
+        if st.sidebar.button("🔄 Yenile", key="za_sidebar_refresh"):
+            fetch_worksheet_data.clear()
+            fetch_visible_worksheets.clear()
+            st.rerun()
+        za_frame = fetch_worksheet_data(active_json_path, za_spreadsheet_id, za_tab)
+        za_summary, za_has_columns = get_member_za_summary(za_frame)
+        if not za_has_columns:
+            st.sidebar.warning("Bu sekmede 'Member ID' veya 'ZA' sütunu bulunamadı.")
+        elif za_summary.empty:
+            st.sidebar.info("Bu sekmede henüz ZA girişi yok.")
+        else:
+            za_column = "ZA" if "ZA" in za_summary.columns else za_summary.columns[-1]
+            za_summary = za_summary.sort_values(
+                by=za_column, key=lambda series: series.map(_za_number), ascending=False
+            )
+            za_numbers = [_za_number(value) for value in za_summary[za_column]]
+            total_za = sum(value for value in za_numbers if value != float("-inf"))
+            st.sidebar.caption(f"Toplam ZA: {total_za:,.0f} · {len(za_summary)} kişi")
+            st.sidebar.dataframe(za_summary, hide_index=True, use_container_width=True)
+except Exception as error:
+    st.sidebar.error(f"❌ ZA paneli hatası: {error}")
 
 
 if selected_page == "✏️ Canlı Tablo Düzenle":
@@ -200,6 +257,9 @@ if selected_page == "✏️ Canlı Tablo Düzenle":
             if not st.session_state.get(viewed_editor_key):
                 audit_log(current_user, "Sekme görüntüledi", f"{editor_spreadsheet_name} / {editor_worksheet_name}")
                 st.session_state[viewed_editor_key] = True
+            editor_flash = st.session_state.pop("editor_flash", None)
+            if editor_flash:
+                st.success(editor_flash)
             updated_editor_data = st.data_editor(
                 editor_data,
                 num_rows="dynamic",
@@ -212,8 +272,9 @@ if selected_page == "✏️ Canlı Tablo Düzenle":
                     active_json_path, editor_spreadsheet_id, editor_worksheet_name, updated_editor_data
                 )
                 audit_log(current_user, "Sekme düzenledi", f"{editor_spreadsheet_name} / {editor_worksheet_name}")
-                st.success(f"✅ [{editor_worksheet_name}] sekmesindeki değişiklikler kaydedildi.")
+                st.session_state["editor_flash"] = f"✅ [{editor_worksheet_name}] sekmesindeki değişiklikler kaydedildi."
                 fetch_visible_worksheets.clear()
+                st.rerun()
     except Exception as error:
         try:
             audit_log(current_user, "Sekme işlemi hatası", str(error), "Başarısız")
@@ -332,6 +393,7 @@ else:
                     st.warning("Bu rapor sekmesinde 'Member ID' veya 'ZA' sütunu bulunamadı.")
                 st.dataframe(member_za_summary, hide_index=True, use_container_width=True)
                 fetch_visible_worksheets.clear()
+                fetch_worksheet_data.clear()
         except Exception as error:
             try:
                 audit_log(current_user, "Rapor güncelleme hatası", str(error), "Başarısız")
