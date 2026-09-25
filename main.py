@@ -2,6 +2,7 @@ import importlib
 import json
 import os
 import hmac
+import re
 import inspect
 from datetime import datetime
 
@@ -193,26 +194,48 @@ def _za_number(value):
         return float("-inf")
 
 
+def _tab_matches_month(title, month_name, year):
+    """Sekme başlığı seçilen ay (TR/EN/ES adları dahil) ve yıla göre eşleşir mi?"""
+    normalized = str(title).casefold()
+    if str(year) not in normalized:
+        return False
+    month_key = str(month_name).casefold()
+    aliases = backend.MONTH_ALIASES.get(month_key, (month_key,))
+    return any(re.search(rf"\b{re.escape(alias)}", normalized) for alias in aliases)
+
+
 if selected_page == "📊 Aylık Perf Listesi":
     st.subheader("📊 Aylık Perf Listesi (Toplu)")
     st.caption(
-        "Global Perf Tablosu'ndaki tüm açık performans sekmeleri taranır; "
-        "ay ay kimin ne kadar perf (ZA) aldığını tek listede gösterir. "
-        "ZA girişi olmayan kişiler listelenmez."
+        "Global Perf Tablosu'ndaki açık performans sekmelerinden yalnızca seçilen "
+        "ay ve yıla ait olanlar taranır; kimin o ay ne kadar perf (ZA) aldığını "
+        "gösterir. ZA girişi olmayan kişiler listelenmez."
     )
     if st.button("🔄 Yenile", key="bulk_perf_refresh"):
         fetch_worksheet_data.clear()
         fetch_visible_worksheets.clear()
         st.rerun()
+
+    # Ay / yıl seçimi: yalnızca seçilen dönemin perf verisi okunur.
+    perf_month_column, perf_year_column, perf_spacer = st.columns([2, 1, 2])
+    with perf_month_column:
+        perf_month = st.selectbox("Ay", MONTH_NAMES, index=datetime.now().month - 1, key="perf_month")
+    with perf_year_column:
+        year_options = [str(year) for year in range(datetime.now().year - 2, datetime.now().year + 2)]
+        perf_year = st.selectbox(
+            "Yıl", year_options, index=year_options.index(str(datetime.now().year)), key="perf_year"
+        )
+
     try:
         bulk_spreadsheet_name = "Global Perf Tablosu" if "Global Perf Tablosu" in sheet_names else sheet_names[0]
         bulk_spreadsheet_id = spreadsheet_dict[bulk_spreadsheet_name]
-        bulk_tabs = fetch_visible_worksheets(active_json_path, bulk_spreadsheet_id, filter_performance=True)
+        all_perf_tabs = fetch_visible_worksheets(active_json_path, bulk_spreadsheet_id, filter_performance=True)
+        bulk_tabs = [tab for tab in all_perf_tabs if _tab_matches_month(tab, perf_month, perf_year)]
     except Exception as error:
         bulk_tabs = []
         st.error(f"❌ Sekme listesi alınamadı: {error}")
     if not bulk_tabs:
-        st.info("Açık performans sekmesi bulunamadı.")
+        st.info(f"🔍 {perf_month} {perf_year} dönemi için açık performans sekmesi bulunamadı.")
     else:
         parts = []
         skipped = []
