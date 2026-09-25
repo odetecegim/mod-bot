@@ -358,13 +358,42 @@ def _authorized_client(creds_input):
     return gspread.authorize(credentials)
 
 
-def get_visible_worksheet_titles(creds_input, spreadsheet_id):
+def is_monthly_performance_sheet(title):
+    """
+    Sadece aylık performans sekmelerini filtreler (Örn: 'ENG Agustos 2026', 'ESP Eylül 2026', 'POR Mart 2026').
+    'Form Yanıtları', 'Rapor', 'Perf' (yalın) ve kopyaları eler.
+    """
+    clean = _normalized(title)
+    # Kesinlikle elenecek anahtar kelimeler
+    if "form" in clean or "yanıt" in clean or "yanit" in clean or "kopya" in clean:
+        return False
+    if "rapor" in clean:
+        return False
+    if "akademi" in clean:
+        return False
+    # Yalın perf sekmeleri: "esp perf", "eng perf", "por perf"
+    if clean.endswith("perf") or clean == "perf":
+        return False
+    # Ay isimlerinden en az biri ve 202x gibi bir yıl içermeli
+    has_year = bool(re.search(r"202\d", clean))
+    has_month = any(month_key in clean for month_key in MONTH_ALIASES) or any(
+        alias in clean for aliases in MONTH_ALIASES.values() for alias in aliases
+    )
+    return has_year and has_month
+
+
+def get_visible_worksheet_titles(creds_input, spreadsheet_id, filter_performance=False):
     workbook = _authorized_client(creds_input).open_by_key(spreadsheet_id)
-    return [
+    titles = [
         worksheet.title
         for worksheet in workbook.worksheets()
         if not _is_hidden(worksheet) and not _is_internal_log_name(worksheet.title)
     ]
+    if filter_performance:
+        filtered = [t for t in titles if is_monthly_performance_sheet(t)]
+        # Eğer filtreleme sonucu boş kalırsa emniyet için tüm açık sekmeleri göster
+        return filtered if filtered else titles
+    return titles
 
 
 def read_visible_worksheet(creds_input, spreadsheet_id, worksheet_title):
@@ -415,6 +444,18 @@ def get_member_za_summary(data):
     summary = data[selected_columns].copy()
     if rename_columns:
         summary = summary.rename(columns=rename_columns)
+
+    # Sıfır ZA ve pasif/boş oyuncuları filtrele:
+    za_col_name = "ZA" if "ZA" in summary.columns else (za_column if za_column in summary.columns else None)
+    if za_col_name:
+        def _valid_za(val):
+            try:
+                num = float(str(val).strip().replace(",", ".").replace(" ", ""))
+                return num > 0
+            except Exception:
+                return False
+        summary = summary[summary[za_col_name].apply(_valid_za)]
+
     return summary, bool(member_id_column and za_column)
 
 

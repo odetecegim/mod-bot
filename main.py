@@ -162,8 +162,8 @@ if not sheet_names:
     st.stop()
 
 @st.cache_data(ttl=600)
-def fetch_visible_worksheets(credentials_path, spreadsheet_id):
-    return get_visible_worksheet_titles(credentials_path, spreadsheet_id)
+def fetch_visible_worksheets(credentials_path, spreadsheet_id, filter_performance=False):
+    return get_visible_worksheet_titles(credentials_path, spreadsheet_id, filter_performance=filter_performance)
 
 
 def _default_index(options, preferred):
@@ -234,8 +234,11 @@ else:
             "Kaynak Tablo (form yanıtları)", sheet_names, index=_default_index(sheet_names, "Error Reporting ENG")
         )
     with report_column:
+        # Rapor tablosunu Global Perf Tablosu'na sabitle
+        perf_sheet_name = "Global Perf Tablosu" if "Global Perf Tablosu" in sheet_names else sheet_names[0]
         selected_report = st.selectbox(
-            "Rapor Tablosu", sheet_names, index=_default_index(sheet_names, "Global Perf Tablosu")
+            "Rapor Tablosu", [perf_sheet_name], index=0, disabled=True,
+            help="Raporlama her zaman Global Perf Tablosu'na işlenir."
         )
 
     month_column, year_column, target_column = st.columns([1, 1, 2])
@@ -246,7 +249,9 @@ else:
         selected_year = st.selectbox("Yıl", year_options, index=1)
     with target_column:
         try:
-            report_worksheets = fetch_visible_worksheets(active_json_path, spreadsheet_dict[selected_report])
+            report_worksheets = fetch_visible_worksheets(
+                active_json_path, spreadsheet_dict[selected_report], filter_performance=True
+            )
         except Exception as error:
             report_worksheets = []
             st.error(f"❌ Sekme listesi alınamadı: {error}")
