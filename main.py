@@ -183,9 +183,7 @@ with st.form("qa_form"):
         selected_source = st.selectbox("Kaynak Tablo", options=sheet_names)
     with report_name:
         selected_report = st.selectbox("Rapor Tablosu", options=sheet_names)
-    language, month, year = st.columns(3)
-    with language:
-        selected_language = st.selectbox("Dil", ["Tümü", "ENG", "ESP", "POR", "TR"])
+    month, year = st.columns(2)
     with month:
         selected_month = st.selectbox("Ay", ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"], index=6)
     with year:
@@ -203,14 +201,13 @@ if submit_button:
         log_box.code("\n".join(logs), language="text")
 
     try:
-        audit_log(current_user, "Rapor güncelleme başlattı", f"{selected_month} {selected_year} / {selected_language}")
+        audit_log(current_user, "Rapor güncelleme başlattı", f"{selected_month} {selected_year}")
         worker = QAReportWorker(
             creds_input=active_json_path,
             source_id=spreadsheet_dict[selected_source],
             report_id=spreadsheet_dict[selected_report],
             selected_year=selected_year,
             selected_month=selected_month,
-            selected_language=selected_language,
             log_callback=log_callback,
             progress_callback=progress_bar.progress,
         )
