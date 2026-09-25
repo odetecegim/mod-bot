@@ -562,13 +562,21 @@ def get_member_za_summary(data):
     # Sıfır ZA ve pasif/boş oyuncuları filtrele:
     za_col_name = "ZA" if "ZA" in summary.columns else (za_column if za_column in summary.columns else None)
     if za_col_name:
-        def _valid_za(val):
+        def _za_sort_number(val):
             try:
-                num = float(str(val).strip().replace(",", ".").replace(" ", ""))
-                return num > 0
+                return float(str(val).strip().replace(",", ".").replace(" ", ""))
             except Exception:
-                return False
-        summary = summary[summary[za_col_name].apply(_valid_za)]
+                return float("-inf")
+
+        # Sıralama: en çok ZA alandan en az ZA alana (bölge/dil fark etmez;
+        # sadece ZA almış oyuncular listede kalır).
+        summary = summary[summary[za_col_name].map(_za_sort_number) > 0]
+        summary = (
+            summary.assign(_za_sort=summary[za_col_name].map(_za_sort_number))
+            .sort_values("_za_sort", ascending=False, kind="stable")
+            .drop(columns=["_za_sort"])
+            .reset_index(drop=True)
+        )
 
     return summary, bool(member_id_column and za_column)
 

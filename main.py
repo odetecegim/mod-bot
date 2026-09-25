@@ -193,49 +193,6 @@ def _za_number(value):
         return float("-inf")
 
 
-# -------------------------------------------------------------------------
-# Yan panel: ZA sıralaması — seçili perf sekmesinde kim ne kadar ZA aldı
-# -------------------------------------------------------------------------
-st.sidebar.markdown("---")
-st.sidebar.subheader("🏆 ZA Sıralaması")
-try:
-    za_spreadsheet_name = "Global Perf Tablosu" if "Global Perf Tablosu" in sheet_names else sheet_names[0]
-    za_spreadsheet_id = spreadsheet_dict[za_spreadsheet_name]
-    za_tabs = fetch_visible_worksheets(active_json_path, za_spreadsheet_id, filter_performance=True)
-    if not za_tabs:
-        st.sidebar.info("Açık performans sekmesi bulunamadı.")
-    else:
-        now = datetime.now()
-        za_tab = st.sidebar.selectbox(
-            "Sekme",
-            za_tabs,
-            index=_candidate_index(za_tabs, MONTH_NAMES[now.month - 1], now.year),
-            key="za_sidebar_tab",
-            help="Global Perf Tablosu'ndaki açık performans sekmeleri listelenir.",
-        )
-        if st.sidebar.button("🔄 Yenile", key="za_sidebar_refresh"):
-            fetch_worksheet_data.clear()
-            fetch_visible_worksheets.clear()
-            st.rerun()
-        za_frame = fetch_worksheet_data(active_json_path, za_spreadsheet_id, za_tab)
-        za_summary, za_has_columns = get_member_za_summary(za_frame)
-        if not za_has_columns:
-            st.sidebar.warning("Bu sekmede 'Member ID' veya 'ZA' sütunu bulunamadı.")
-        elif za_summary.empty:
-            st.sidebar.info("Bu sekmede henüz ZA girişi yok.")
-        else:
-            za_column = "ZA" if "ZA" in za_summary.columns else za_summary.columns[-1]
-            za_summary = za_summary.sort_values(
-                by=za_column, key=lambda series: series.map(_za_number), ascending=False
-            )
-            za_numbers = [_za_number(value) for value in za_summary[za_column]]
-            total_za = sum(value for value in za_numbers if value != float("-inf"))
-            st.sidebar.caption(f"Toplam ZA: {total_za:,.0f} · {len(za_summary)} kişi")
-            st.sidebar.dataframe(za_summary, hide_index=True, use_container_width=True)
-except Exception as error:
-    st.sidebar.error(f"❌ ZA paneli hatası: {error}")
-
-
 if selected_page == "📊 Aylık Perf Listesi":
     st.subheader("📊 Aylık Perf Listesi (Toplu)")
     st.caption(
@@ -273,7 +230,6 @@ if selected_page == "📊 Aylık Perf Listesi":
                     part = summary.rename(columns={za_column: "ZA"}).copy()
                     part.insert(0, "Sekme", tab_title)
                     part["_za_sort"] = part["ZA"].map(_za_number)
-                    # Sıralama: sheet'teki satır sırası korunur (ZA'ya göre yeniden sıralanmaz).
                     parts.append(part)
                 except Exception as error:
                     skipped.append(f"{tab_title} — {error}")
@@ -284,7 +240,12 @@ if selected_page == "📊 Aylık Perf Listesi":
         if not parts:
             st.info("Hiçbir sekmede ZA kaydı bulunamadı.")
         else:
+            # Toplu sıralama: bölge/dil fark etmez — tüm sekmeler birleştirilip
+            # en çok ZA alandan en az ZA alana sıralanır (yalnızca ZA alanlar).
             bulk_table = pd.concat(parts, ignore_index=True)
+            bulk_table = bulk_table.sort_values(
+                "_za_sort", ascending=False, kind="stable"
+            ).reset_index(drop=True)
             monthly_summary = []
             for tab_title in bulk_tabs:
                 rows = bulk_table[bulk_table["Sekme"] == tab_title]
@@ -299,6 +260,10 @@ if selected_page == "📊 Aylık Perf Listesi":
                     "Ortalama ZA": round(sum(values) / len(values), 1) if values else 0,
                 })
             df_month = pd.DataFrame(monthly_summary)
+            if not df_month.empty and "Toplam ZA" in df_month.columns:
+                df_month = df_month.sort_values(
+                    "Toplam ZA", ascending=False, kind="stable"
+                ).reset_index(drop=True)
 
             group_cols = [col for col in bulk_table.columns if col not in ("Sekme", "ZA", "_za_sort")]
             group_frame = bulk_table.copy()
@@ -310,6 +275,8 @@ if selected_page == "📊 Aylık Perf Listesi":
                 .agg(Toplam_ZA="sum", Kaç_Ay="count")
                 .reset_index()
                 .rename(columns={"Toplam_ZA": "Toplam ZA", "Kaç_Ay": "Aldığı ay"})
+                .sort_values("Toplam ZA", ascending=False, kind="stable")
+                .reset_index(drop=True)
             )
 
             total_za = sum(float(value) for value in bulk_table["_za_sort"] if value != float("-inf"))
