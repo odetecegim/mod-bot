@@ -163,14 +163,19 @@ if not sheet_names:
     st.stop()
 
 @st.cache_data(ttl=600)
-def fetch_visible_worksheets(credentials_path, spreadsheet_id, filter_performance=False):
-    return get_visible_worksheet_titles(credentials_path, spreadsheet_id, filter_performance=filter_performance)
+def fetch_visible_worksheets(credentials_path, spreadsheet_id, filter_performance=False, include_hidden=False):
+    return get_visible_worksheet_titles(
+        credentials_path, spreadsheet_id,
+        filter_performance=filter_performance, include_hidden=include_hidden,
+    )
 
 
 @st.cache_data(ttl=300)
-def fetch_worksheet_data(credentials_path, spreadsheet_id, worksheet_title):
-    """Yan panel ZA listesi için sekme verisini önbellekli okur."""
-    return read_visible_worksheet(credentials_path, spreadsheet_id, worksheet_title)
+def fetch_worksheet_data(credentials_path, spreadsheet_id, worksheet_title, include_hidden=False):
+    """Sekme verisini önbellekli okur (include_hidden: gizli perf sekmeleri için)."""
+    return read_visible_worksheet(
+        credentials_path, spreadsheet_id, worksheet_title, include_hidden=include_hidden
+    )
 
 
 def _default_index(options, preferred):
@@ -229,20 +234,26 @@ if selected_page == "📊 Aylık Perf Listesi":
     try:
         bulk_spreadsheet_name = "Global Perf Tablosu" if "Global Perf Tablosu" in sheet_names else sheet_names[0]
         bulk_spreadsheet_id = spreadsheet_dict[bulk_spreadsheet_name]
-        all_perf_tabs = fetch_visible_worksheets(active_json_path, bulk_spreadsheet_id, filter_performance=True)
+        # Gizli performans sekmeleri de seçilen ay/yıl verisine dahil edilir.
+        all_perf_tabs = fetch_visible_worksheets(
+            active_json_path, bulk_spreadsheet_id,
+            filter_performance=True, include_hidden=True,
+        )
         bulk_tabs = [tab for tab in all_perf_tabs if _tab_matches_month(tab, perf_month, perf_year)]
     except Exception as error:
         bulk_tabs = []
         st.error(f"❌ Sekme listesi alınamadı: {error}")
     if not bulk_tabs:
-        st.info(f"🔍 {perf_month} {perf_year} dönemi için açık performans sekmesi bulunamadı.")
+        st.info(f"🔍 {perf_month} {perf_year} dönemi için performans sekmesi bulunamadı.")
     else:
         parts = []
         skipped = []
         with st.spinner("Aylık perf sekmeleri okunuyor..."):
             for tab_title in bulk_tabs:
                 try:
-                    frame = fetch_worksheet_data(active_json_path, bulk_spreadsheet_id, tab_title)
+                    frame = fetch_worksheet_data(
+                        active_json_path, bulk_spreadsheet_id, tab_title, include_hidden=True
+                    )
                     summary, has_columns = get_member_za_summary(frame)
                     if not has_columns:
                         skipped.append(f"{tab_title} — Member ID veya ZA sütunu bulunamadı")

@@ -439,24 +439,36 @@ def is_monthly_performance_sheet(title):
     return has_year and has_month
 
 
-def get_visible_worksheet_titles(creds_input, spreadsheet_id, filter_performance=False):
+def get_visible_worksheet_titles(creds_input, spreadsheet_id, filter_performance=False, include_hidden=False):
+    """Açık sekme başlıklarını döndürür.
+
+    include_hidden=True iken gizli sekmeler de listeye dahil edilir (yalnızca
+    performans listesi gibi salt-okunur görünümler için); iç log sekmesi her
+    durumda hariç tutulur.
+    """
     workbook = _authorized_client(creds_input).open_by_key(spreadsheet_id)
     titles = [
         worksheet.title
         for worksheet in workbook.worksheets()
-        if not _is_hidden(worksheet) and not _is_internal_log_name(worksheet.title)
+        if (include_hidden or not _is_hidden(worksheet))
+        and not _is_internal_log_name(worksheet.title)
     ]
     if filter_performance:
         filtered = [t for t in titles if is_monthly_performance_sheet(t)]
-        # Eğer filtreleme sonucu boş kalırsa emniyet için tüm açık sekmeleri göster
+        # Eğer filtreleme sonucu boş kalırsa emniyet için tüm sekmeleri göster
         return filtered if filtered else titles
     return titles
 
 
-def read_visible_worksheet(creds_input, spreadsheet_id, worksheet_title):
+def read_visible_worksheet(creds_input, spreadsheet_id, worksheet_title, include_hidden=False):
+    """Sekme verisini biçimlendirilmiş değerlerle okur.
+
+    include_hidden=True iken gizli sekmeler de okunabilir (iç log sekmesi
+    yine de okunamaz).
+    """
     workbook = _authorized_client(creds_input).open_by_key(spreadsheet_id)
     worksheet = workbook.worksheet(worksheet_title)
-    if _is_hidden(worksheet) or _is_internal_log_name(worksheet.title):
+    if _is_internal_log_name(worksheet.title) or (_is_hidden(worksheet) and not include_hidden):
         raise ValueError("Bu sekme araç içinden görüntülenemez veya düzenlenemez.")
     # Görüntüleme için biçimlendirilmiş (hesaplanmış) değerler okunur; böylece
     # panelde =SUM(...) gibi formüller düz metin olarak değil, gerçek sonuç olarak görünür.
