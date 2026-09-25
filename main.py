@@ -1,6 +1,7 @@
 import json
 import os
 import hmac
+from datetime import datetime
 
 import streamlit as st
 
@@ -17,8 +18,13 @@ from backend import (
 
 DEFAULT_AUDIT_LOG_SHEET_ID = "1WMyChax15-VD7o-39FYVcA10NDYwi_M_7zpIn0fFJOE"
 
+MONTH_NAMES = [
+    "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
+    "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık",
+]
 
-st.set_page_config(page_title="QA Raporlama Paneli", page_icon="📊", layout="centered")
+
+st.set_page_config(page_title="QA Raporlama Paneli", page_icon="📊", layout="wide")
 st.title("📊 QA Görev Raporlama Paneli")
 st.caption("Açık sekmelerdeki e-posta adreslerini seçilen ay ve yıla göre eşleştirip güncelleyin.")
 
@@ -109,6 +115,13 @@ if st.sidebar.button("Çıkış Yap"):
         st.session_state.authenticated_user = None
         st.rerun()
 
+st.sidebar.markdown("---")
+selected_page = st.sidebar.radio(
+    "Menü",
+    ["🚀 QA Rapor Güncelleme", "✏️ Canlı Tablo Düzenle"],
+    index=0,
+)
+
 
 @st.cache_data(ttl=600)
 def fetch_spreadsheets(credentials_path):
@@ -144,16 +157,40 @@ if not sheet_names:
     )
     st.stop()
 
-with st.expander("✏️ Açık Google Sheets Sekmesini Canlı Düzenle"):
-    st.caption("Gizli sekmeler listelenmez. Kaydet düğmesi, yaptığınız değişiklikleri doğrudan seçilen sekmeye yazar.")
+@st.cache_data(ttl=600)
+def fetch_visible_worksheets(credentials_path, spreadsheet_id):
+    return get_visible_worksheet_titles(credentials_path, spreadsheet_id)
+
+
+def _default_index(options, preferred):
+    return options.index(preferred) if preferred in options else 0
+
+
+def _candidate_index(options, month_name, year):
+    probe = month_name.casefold()[:5]
+    for index, option in enumerate(options):
+        normalized = str(option).casefold()
+        if str(year) in normalized and probe in normalized:
+            return index
+    return 0
+
+
+if selected_page == "✏️ Canlı Tablo Düzenle":
+    st.subheader("✏️ Açık Google Sheets Sekmesini Canlı Düzenle")
+    st.caption(
+        "Gizli ve araç günlük sekmeleri listelenmez. Kaydet düğmesi, yaptığınız "
+        "değişiklikleri doğrudan seçilen sekmeye yazar."
+    )
     editor_spreadsheet_name = st.selectbox("Düzenlenecek tablo", sheet_names, key="editor_spreadsheet")
     try:
         editor_spreadsheet_id = spreadsheet_dict[editor_spreadsheet_name]
-        visible_worksheets = get_visible_worksheet_titles(active_json_path, editor_spreadsheet_id)
+        visible_worksheets = fetch_visible_worksheets(active_json_path, editor_spreadsheet_id)
         if not visible_worksheets:
-            st.info("Bu tabloda açık sekme bulunamadı.")
+            st.info("Bu tabloda düzenlenebilir açık sekme bulunamadı.")
         else:
-            editor_worksheet_name = st.selectbox("Açık sekme", visible_worksheets, key=f"worksheet_{editor_spreadsheet_id}")
+            editor_worksheet_name = st.selectbox(
+                "Açık sekme", visible_worksheets, key=f"editor_worksheet_{editor_spreadsheet_id}"
+            )
             editor_data = read_visible_worksheet(active_json_path, editor_spreadsheet_id, editor_worksheet_name)
             viewed_editor_key = f"viewed_{editor_spreadsheet_id}_{editor_worksheet_name}"
             if not st.session_state.get(viewed_editor_key):
@@ -167,9 +204,12 @@ with st.expander("✏️ Açık Google Sheets Sekmesini Canlı Düzenle"):
                 key=f"data_editor_{editor_spreadsheet_id}_{editor_worksheet_name}",
             )
             if st.button("💾 Değişiklikleri Canlı Kaydet", key=f"save_{editor_spreadsheet_id}_{editor_worksheet_name}"):
-                update_visible_worksheet(active_json_path, editor_spreadsheet_id, editor_worksheet_name, updated_editor_data)
+                update_visible_worksheet(
+                    active_json_path, editor_spreadsheet_id, editor_worksheet_name, updated_editor_data
+                )
                 audit_log(current_user, "Sekme düzenledi", f"{editor_spreadsheet_name} / {editor_worksheet_name}")
                 st.success(f"✅ [{editor_worksheet_name}] sekmesindeki değişiklikler kaydedildi.")
+                fetch_visible_worksheets.clear()
     except Exception as error:
         try:
             audit_log(current_user, "Sekme işlemi hatası", str(error), "Başarısız")
@@ -177,55 +217,98 @@ with st.expander("✏️ Açık Google Sheets Sekmesini Canlı Düzenle"):
             pass
         st.error(f"❌ Sekme düzenleme hatası: {error}")
 
-with st.form("qa_form"):
-    source_name, report_name = st.columns(2)
-    with source_name:
-        selected_source = st.selectbox("Kaynak Tablo", options=sheet_names)
-    with report_name:
-        selected_report = st.selectbox("Rapor Tablosu", options=sheet_names)
-    month, year = st.columns(2)
-    with month:
-        selected_month = st.selectbox("Ay", ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"], index=6)
-    with year:
-        selected_year = st.selectbox("Yıl", ["2025", "2026", "2027"], index=1)
-    submit_button = st.form_submit_button("🚀 Raporu Güncelle", use_container_width=True)
-
-
-if submit_button:
-    progress_bar = st.progress(0)
-    log_box = st.code("> İşlem başlatıldı...\n", language="text")
-    logs = []
-
-    def log_callback(message):
-        logs.append(f"> {message}")
-        log_box.code("\n".join(logs), language="text")
-
-    try:
-        audit_log(current_user, "Rapor güncelleme başlattı", f"{selected_month} {selected_year}")
-        worker = QAReportWorker(
-            creds_input=active_json_path,
-            source_id=spreadsheet_dict[selected_source],
-            report_id=spreadsheet_dict[selected_report],
-            selected_year=selected_year,
-            selected_month=selected_month,
-            log_callback=log_callback,
-            progress_callback=progress_bar.progress,
+else:
+    st.subheader("🚀 QA Rapor Güncelleme")
+    st.caption(
+        "Kaynak form sekmeleri 'Zaman damgası' sütununa göre seçilen aya filtrelenir; "
+        "isim/nick eşleşmesiyle hedef sekmedeki ilgili puan sütunlarına yazılır. "
+        "'Toplam' ve 'ZA' sütunlarına dokunulmaz (formülleriniz korunur)."
+    )
+    source_column, report_column = st.columns(2)
+    with source_column:
+        selected_source = st.selectbox(
+            "Kaynak Tablo (form yanıtları)", sheet_names, index=_default_index(sheet_names, "Error Reporting ENG")
         )
-        report_data = worker.process()
-        if report_data is None:
-            audit_log(current_user, "Rapor güncelleme", "İşlem tamamlanamadı", "Başarısız")
-            st.error("❌ Rapor güncellenemedi; ayrıntılar işlem günlüğünde.")
-        else:
-            audit_log(current_user, "Rapor güncelledi", f"{worker.used_worksheet_title} sekmesi güncellendi")
-            st.success("✅ Rapor başarıyla güncellendi!")
-            st.subheader("👤 Aylık Oyuncu ZA Özeti")
-            member_za_summary, has_member_id_and_za = get_member_za_summary(report_data)
-            if not has_member_id_and_za:
-                st.warning("Bu rapor sekmesinde 'Member ID' veya 'ZA' sütunu bulunamadı.")
-            st.dataframe(member_za_summary, hide_index=True, use_container_width=True)
-    except Exception as error:
+    with report_column:
+        selected_report = st.selectbox(
+            "Rapor Tablosu", sheet_names, index=_default_index(sheet_names, "Global Perf Tablosu")
+        )
+
+    month_column, year_column, target_column = st.columns([1, 1, 2])
+    with month_column:
+        selected_month = st.selectbox("Ay", MONTH_NAMES, index=datetime.now().month - 1)
+    with year_column:
+        year_options = [str(year) for year in range(datetime.now().year - 1, datetime.now().year + 3)]
+        selected_year = st.selectbox("Yıl", year_options, index=1)
+    with target_column:
         try:
-            audit_log(current_user, "Rapor güncelleme hatası", str(error), "Başarısız")
-        except Exception:
-            pass
-        st.error(f"❌ İşlem sırasında bir hata oluştu: {error}")
+            report_worksheets = fetch_visible_worksheets(active_json_path, spreadsheet_dict[selected_report])
+        except Exception as error:
+            report_worksheets = []
+            st.error(f"❌ Sekme listesi alınamadı: {error}")
+        if not report_worksheets:
+            selected_target = None
+            st.info("Bu tabloda düzenlenebilir açık sekme bulunamadı.")
+        else:
+            selected_target = st.selectbox(
+                "Hedef Sekme",
+                report_worksheets,
+                index=_candidate_index(report_worksheets, selected_month, selected_year),
+                key=f"target_{spreadsheet_dict[selected_report]}",
+            )
+            st.caption(f"Ay/yıl ile eşleşen sekme otomatik önerilir: **{selected_target}**")
+
+    submit_button = st.button("🚀 Raporu Güncelle", use_container_width=True, type="primary")
+
+
+    if submit_button:
+        if not selected_target:
+            st.error("❌ Hedef sekme seçilmedi.")
+            st.stop()
+        progress_bar = st.progress(0)
+        log_box = st.code("> İşlem başlatıldı...\n", language="text")
+        logs = []
+
+        def log_callback(message):
+            logs.append(f"> {message}")
+            log_box.code("\n".join(logs), language="text")
+
+        try:
+            audit_log(
+                current_user,
+                "Rapor güncelleme başlattı",
+                f"{selected_report} / {selected_target} ({selected_month} {selected_year})",
+            )
+            worker = QAReportWorker(
+                creds_input=active_json_path,
+                source_id=spreadsheet_dict[selected_source],
+                report_id=spreadsheet_dict[selected_report],
+                selected_year=selected_year,
+                selected_month=selected_month,
+                target_worksheet_title=selected_target,
+                log_callback=log_callback,
+                progress_callback=progress_bar.progress,
+            )
+            report_data = worker.process()
+            if report_data is None:
+                audit_log(current_user, "Rapor güncelleme", "İşlem tamamlanamadı", "Başarısız")
+                st.error("❌ Rapor güncellenemedi; ayrıntılar işlem günlüğünde.")
+            else:
+                audit_log(
+                    current_user,
+                    "Rapor güncelledi",
+                    f"{worker.used_worksheet_title} sekmesi güncellendi ({selected_month} {selected_year})",
+                )
+                st.success(f"✅ [{worker.used_worksheet_title}] sekmesi başarıyla güncellendi!")
+                st.subheader("👤 Aylık Oyuncu ZA Özeti")
+                member_za_summary, has_member_id_and_za = get_member_za_summary(report_data)
+                if not has_member_id_and_za:
+                    st.warning("Bu rapor sekmesinde 'Member ID' veya 'ZA' sütunu bulunamadı.")
+                st.dataframe(member_za_summary, hide_index=True, use_container_width=True)
+                fetch_visible_worksheets.clear()
+        except Exception as error:
+            try:
+                audit_log(current_user, "Rapor güncelleme hatası", str(error), "Başarısız")
+            except Exception:
+                pass
+            st.error(f"❌ İşlem sırasında bir hata oluştu: {error}")
