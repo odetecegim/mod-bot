@@ -274,13 +274,17 @@ else:
         if not selected_target:
             st.error("❌ Hedef sekme seçilmedi.")
             st.stop()
-        progress_bar = st.progress(0)
-        log_box = st.code("> İşlem başlatıldı...\n", language="text")
+        progress_bar = st.progress(1, text="İşlem başlatılıyor... (%1)")
+        log_box = None
         logs = []
 
         def log_callback(message):
             logs.append(f"> {message}")
-            log_box.code("\n".join(logs), language="text")
+
+        def update_progress(val, text=None):
+            val = max(1, min(100, int(val)))
+            status_text = text or f"İşlem sürüyor... (%{val})"
+            progress_bar.progress(val, text=status_text)
 
         try:
             audit_log(
@@ -295,7 +299,7 @@ else:
                 "selected_year": selected_year,
                 "selected_month": selected_month,
                 "log_callback": log_callback,
-                "progress_callback": progress_bar.progress,
+                "progress_callback": update_progress,
             }
             if "target_worksheet_title" not in inspect.signature(QAReportWorker.__init__).parameters:
                 st.error(
@@ -310,8 +314,12 @@ else:
             report_data = worker.process()
             if report_data is None:
                 audit_log(current_user, "Rapor güncelleme", "İşlem tamamlanamadı", "Başarısız")
-                st.error("❌ Rapor güncellenemedi; ayrıntılar işlem günlüğünde.")
+                st.error("❌ Rapor güncellenemedi; bir hata oluştu.")
+                if logs:
+                    with st.expander("Detaylı Hata Günlüğü"):
+                        st.code("\n".join(logs), language="text")
             else:
+                progress_bar.progress(100, text="Tamamlandı! (%100)")
                 audit_log(
                     current_user,
                     "Rapor güncelledi",
@@ -330,3 +338,6 @@ else:
             except Exception:
                 pass
             st.error(f"❌ İşlem sırasında bir hata oluştu: {error}")
+            if logs:
+                with st.expander("Detaylı Hata Günlüğü"):
+                    st.code("\n".join(logs), language="text")

@@ -99,6 +99,20 @@ def _nick_key(value):
     return key if len(key) >= 3 else ""
 
 
+def _nick_match(source_nick, report_nick):
+    """İki oyun içi nick aynı kişiye mi ait? (birebir veya küçük yazım hataları toleransı)"""
+    if not source_nick or not report_nick:
+        return False
+    if source_nick == report_nick:
+        return True
+    # En az 4 karakterli nicklerde harf hatası toleransı (ör. Devi1to vs Dev1to, SrDjaaaaaa vs SrDjaaaaaaaa)
+    if len(source_nick) >= 4 and len(report_nick) >= 4:
+        ratio = difflib.SequenceMatcher(None, source_nick, report_nick).ratio()
+        if ratio >= 0.82:
+            return True
+    return False
+
+
 def _name_match(source_tokens, report_tokens):
     """İki isim kümesi aynı kişiye mi ait? (kelime alt kümesi veya yazım hatası toleransı)"""
     if not source_tokens or not report_tokens:
@@ -264,9 +278,10 @@ def _find_report_row(row_records, tokens, nick):
     """Kaynak kaydına karşılık gelen hedef satırı bulur (dolu satırlar tercih edilir)."""
     best_index = None
     for index, (row_tokens, row_nick, has_identity_cell) in enumerate(row_records):
-        if nick and row_nick and nick == row_nick:
-            matched = True
-        else:
+        matched = False
+        if nick and row_nick:
+            matched = _nick_match(nick, row_nick)
+        if not matched and tokens:
             matched = _name_match(tokens, row_tokens)
         if not matched:
             continue
@@ -528,27 +543,27 @@ class QAReportWorker:
         source_workbook = client.open_by_key(self.source_id)
         records = {category: [] for category in CATEGORY_LABELS}
         scanned_sheets = 0
-        for worksheet in source_workbook.worksheets():
+        all_sheets = source_workbook.worksheets()
+        total_sheets = max(1, len(all_sheets))
+        for sheet_idx, worksheet in enumerate(all_sheets):
+            # 5% ile 45% arasını kaynak sekme okumaya paylaştırıyoruz
+            current_pct = 5 + int((sheet_idx / total_sheets) * 40)
+            self.progress_callback(current_pct, f"Kaynak sekmeler taranıyor... (%{current_pct})")
             if _is_hidden(worksheet):
-                self.log_callback(f"🙈 Gizli sekme atlandı: [{worksheet.title}]")
                 continue
             category = _category_for_title(worksheet.title)
             if not category:
-                self.log_callback(f"⏭️ Kategori belirlenemedi, atlandı: [{worksheet.title}]")
                 continue
             values = worksheet.get_all_values()
             if len(values) < 2:
-                self.log_callback(f"⚠️ [{worksheet.title}] sekmesinde veri yok; atlandı.")
                 continue
             headers = [str(header).strip() for header in values[0]]
             data_rows = [row for row in values[1:] if any(str(cell).strip() for cell in row)]
             name_index, nick_index = _find_person_columns(headers)
             date_index = _find_date_column_index(headers, data_rows, skip_indexes=(name_index, nick_index))
             if date_index is None:
-                self.log_callback(f"⚠️ [{worksheet.title}] tarih sütunu bulunamadı; atlandı.")
                 continue
             if name_index is None and nick_index is None:
-                self.log_callback(f"⚠️ [{worksheet.title}] personel adı/nick sütunu bulunamadı; atlandı.")
                 continue
             selected = 0
             for row in data_rows:
@@ -561,20 +576,12 @@ class QAReportWorker:
                 records[category].append((_name_tokens(name), _nick_key(nick), name, nick))
                 selected += 1
             scanned_sheets += 1
-            self.log_callback(
-                f"📥 [{worksheet.title}] → {CATEGORY_LABELS[category]}: {selected} kayıt "
-                f"({self.selected_month} {self.selected_year})"
-            )
-        self.log_callback(
-            f"📊 {scanned_sheets} kaynak sekme tarandı, toplam "
-            f"{sum(len(entries) for entries in records.values())} kayıt bulundu."
-        )
         return records
 
     def process(self, dry_run=False):
         try:
             self.log_callback("⚙️ Google Sheets bağlantısı kuruluyor...")
-            self.progress_callback(10)
+            self.progress_callback(1, "Google Sheets bağlantısı kuruluyor... (%1)")
             target_month = _month_number(self.selected_month)
             if not target_month:
                 self.log_callback(f"❌ '{self.selected_month}' ayı tanınamadı.")
@@ -586,11 +593,12 @@ class QAReportWorker:
                 return None
 
             client = _authorized_client(self.creds_input)
+            self.progress_callback(5, "Kaynak form sekmeleri taranıyor... (%5)")
             records = self._collect_source_records(client, target_month, target_year)
             if sum(len(entries) for entries in records.values()) == 0:
                 self.log_callback("⚠️ Seçilen dönem için kaynak sekmelerde hiç kayıt bulunamadı; hedef sekme değiştirilmedi.")
                 return None
-            self.progress_callback(45)
+            self.progress_callback(50, "Hedef performans tablosu okunuyor... (%50)")
 
             report_workbook = client.open_by_key(self.report_id)
             if self.target_worksheet_title:
@@ -629,6 +637,22 @@ class QAReportWorker:
             score_indexes = [index for index, header in enumerate(headers) if not _is_non_score_column(header)]
             toplam_index = next((index for index, header in enumerate(headers) if _normalized(header) == "toplam"), None)
             za_index = next((index for index, header in enumerate(headers) if _normalized(header) == "za"), None)
+
+            self.progress_callback(65, "Kayıtlar ve personeller eşleştiriliyor... (%65)")
+
+            # Sadece geçerli personel satırlarını al (alt özet/header satırlarını hariç tut)
+            cleaned_data_rows = []
+            for row in data_rows:
+                name_val = _cell(row, name_index)
+                nick_val = _cell(row, nick_index)
+                # Satır başlık veya alt özet satırıysa eşleşmeye dahil etme
+                row_str = " ".join(str(c).strip().casefold() for c in row if c)
+                if any(hdr in row_str for hdr in ["member id", "ad soyad", "nick", "toplam"]) and not (_name_tokens(name_val) and not _is_non_score_column(name_val)):
+                    # Eğer ad sütununun kendisi 'ad soyad' veya 'member id' ise bu bir alt başlık satırıdır
+                    if _normalized(name_val) in NON_SCORE_EXACT or _normalized(nick_val) in NON_SCORE_EXACT:
+                        continue
+                cleaned_data_rows.append(row)
+            data_rows = cleaned_data_rows
 
             row_records = [
                 (_name_tokens(_cell(row, name_index)), _nick_key(_cell(row, nick_index)), bool(_cell(row, 0)))
@@ -685,7 +709,7 @@ class QAReportWorker:
                         entry["nick"] = raw_nick
                     entry["counts"][column_index] = entry["counts"].get(column_index, 0) + 1
 
-            self.progress_callback(85)
+            self.progress_callback(80, "Puanlar hedef sekmeye yazılıyor... (%80)")
             appended_names = []
             if not dry_run:
                 updates = []
@@ -717,12 +741,16 @@ class QAReportWorker:
                     next_row_index += 1
                 if updates:
                     try:
-                        for start in range(0, len(updates), 100):
+                        total_batches = max(1, (len(updates) + 99) // 100)
+                        for batch_idx, start in enumerate(range(0, len(updates), 100)):
                             report_sheet.batch_update(updates[start:start + 100], value_input_option="USER_ENTERED")
+                            write_pct = 80 + int(((batch_idx + 1) / total_batches) * 10)
+                            self.progress_callback(write_pct, f"Puanlar kaydediliyor... (%{write_pct})")
                     except Exception as error:
                         self.log_callback(f"❌ Sekmeye yazma hatası: {error}")
                         return None
 
+            self.progress_callback(92, "Sonuç tablosu hazırlanıyor... (%92)")
             display_headers = _unique_headers(headers)
             current_values = None
             try:
@@ -767,7 +795,7 @@ class QAReportWorker:
                     display_row[za_index] = int(total * 500)
                 display_rows.append(display_row)
 
-            self.progress_callback(100)
+            self.progress_callback(100, "İşlem tamamlandı! (%100)")
             state = "hesaplandı (yazılmadı)" if dry_run else "yazıldı"
             self.log_callback(
                 f"✅ [{report_sheet.title}] sekmesi: {len(pending)} satır hücresi güncellendi, "
