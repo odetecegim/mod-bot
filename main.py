@@ -1,10 +1,14 @@
+import importlib
 import json
 import os
 import hmac
+import inspect
 from datetime import datetime
 
 import streamlit as st
 
+import backend
+importlib.reload(backend)
 from backend import (
     QAReportWorker,
     get_available_spreadsheets,
@@ -279,16 +283,25 @@ else:
                 "Rapor güncelleme başlattı",
                 f"{selected_report} / {selected_target} ({selected_month} {selected_year})",
             )
-            worker = QAReportWorker(
-                creds_input=active_json_path,
-                source_id=spreadsheet_dict[selected_source],
-                report_id=spreadsheet_dict[selected_report],
-                selected_year=selected_year,
-                selected_month=selected_month,
-                target_worksheet_title=selected_target,
-                log_callback=log_callback,
-                progress_callback=progress_bar.progress,
-            )
+            worker_kwargs = {
+                "creds_input": active_json_path,
+                "source_id": spreadsheet_dict[selected_source],
+                "report_id": spreadsheet_dict[selected_report],
+                "selected_year": selected_year,
+                "selected_month": selected_month,
+                "log_callback": log_callback,
+                "progress_callback": progress_bar.progress,
+            }
+            if "target_worksheet_title" not in inspect.signature(QAReportWorker.__init__).parameters:
+                st.error(
+                    "❌ Bellekte eski bir backend.py sürümü var. Python, import edilen modülü "
+                    "uygulama yeniden başlatılmadan yenilemez; bu yüzden işlem güvenlik için "
+                    "başlatılmadı. Streamlit'i tamamen durdurup yeniden başlatın "
+                    "(Ctrl+C → `streamlit run main.py`). Cloud'da: Manage app → Reboot."
+                )
+                st.stop()
+            worker_kwargs["target_worksheet_title"] = selected_target
+            worker = QAReportWorker(**worker_kwargs)
             report_data = worker.process()
             if report_data is None:
                 audit_log(current_user, "Rapor güncelleme", "İşlem tamamlanamadı", "Başarısız")
