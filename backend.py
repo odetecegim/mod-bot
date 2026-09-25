@@ -69,8 +69,10 @@ def _matches_period(worksheet, month_name, year, language=None):
     title = _normalized(worksheet.title)
     if str(year).strip() not in title or not any(term in title for term in _month_terms(month_name)):
         return False
+    if not language:
+        return True
     language = _normalized(language)
-    return not language or language == "tümü" or language in title
+    return language == "tümü" or language in title
 
 
 def get_available_spreadsheets(creds_input):
@@ -128,8 +130,8 @@ def update_visible_worksheet(creds_input, spreadsheet_id, worksheet_title, data)
         raise ValueError("Bu sekme araç içinden düzenlenemez.")
     worksheet.clear()
     worksheet.update(
-        range_name="A1",
         values=[data.columns.tolist()] + data.fillna("").astype(str).values.tolist(),
+        range_name="A1",
     )
 
 
@@ -152,10 +154,10 @@ def append_audit_log(creds_input, spreadsheet_id, worksheet_title, user_name, ac
     try:
         worksheet = workbook.worksheet(worksheet_title)
     except gspread.WorksheetNotFound:
-        worksheet = workbook.add_worksheet(title=worksheet_title, rows="1000", cols="7")
+        worksheet = workbook.add_worksheet(title=worksheet_title, rows=1000, cols=7)
         worksheet.update(
-            range_name="A1",
             values=[["Tarih", "Kullanıcı", "İşlem", "Detay", "Durum", "Tablo ID", "Sekme"]],
+            range_name="A1",
         )
     if _is_hidden(worksheet):
         raise ValueError("Log sekmesi gizli olmamalıdır.")
@@ -175,27 +177,29 @@ def _find_target_worksheet(wb, language, month_name, year, log_callback=print, c
         worksheet for worksheet in wb.worksheets()
         if not _is_hidden(worksheet) and "rapor" not in _normalized(worksheet.title)
     ]
-    for worksheet in candidates:
-        if _matches_period(worksheet, month_name, year, language):
-            return worksheet
+    if language:
+        for worksheet in candidates:
+            if _matches_period(worksheet, month_name, year, language):
+                return worksheet
     for worksheet in candidates:
         if _matches_period(worksheet, month_name, year):
-            log_callback(f"⚠️ Tam dil eşleşmesi bulunamadı; [{worksheet.title}] sekmesi kullanılıyor.")
+            if language:
+                log_callback(f"⚠️ Tam dil eşleşmesi bulunamadı; [{worksheet.title}] sekmesi kullanılıyor.")
             return worksheet
     if not create_if_missing:
         return None
 
-    title = f"{language} {month_name} {year}"
+    title = f"{language} {month_name} {year}".strip() if language else f"{month_name} {year}"
     log_callback(f"🆕 '{title}' sekmesi bulunamadı, yeni oluşturuluyor...")
-    worksheet = wb.add_worksheet(title=title, rows="1000", cols=str(max(len(source_columns or []), 10)))
+    worksheet = wb.add_worksheet(title=title, rows=1000, cols=max(len(source_columns or []), 10))
     if source_columns:
-        worksheet.update(range_name="A1", values=[list(source_columns)])
+        worksheet.update(values=[list(source_columns)], range_name="A1")
     return worksheet
 
 
 class QAReportWorker:
     def __init__(self, creds_input, source_id, report_id, selected_year, selected_month,
-                 selected_language="ENG", log_callback=print, progress_callback=None):
+                 selected_language=None, log_callback=print, progress_callback=None):
         self.creds_input = creds_input
         self.source_id = source_id
         self.report_id = report_id
@@ -275,16 +279,22 @@ class QAReportWorker:
                 report_data[report_column] = 0
                 headers.append(report_column)
 
-            report_data[email_column] = report_data[email_column].map(_normalized)
-            known_emails = set(report_data[email_column])
+            normalized_report_emails = report_data[email_column].astype(str).map(_normalized)
+            known_emails = set(normalized_report_emails[normalized_report_emails != ""])
+
+            new_rows = []
             for email in report_counts:
                 if email not in known_emails:
                     new_row = {column: "" for column in report_data.columns}
                     new_row[email_column] = email
                     new_row[user_column] = display_names.get(email, email)
-                    report_data = pd.concat([report_data, pd.DataFrame([new_row])], ignore_index=True)
+                    new_rows.append(new_row)
 
-            report_data[report_column] = report_data[email_column].map(report_counts).fillna(0).astype(int)
+            if new_rows:
+                report_data = pd.concat([report_data, pd.DataFrame(new_rows)], ignore_index=True)
+                normalized_report_emails = report_data[email_column].astype(str).map(_normalized)
+
+            report_data[report_column] = normalized_report_emails.map(report_counts).fillna(0).astype(int)
             score_columns = [column for column in report_data.columns if _normalized(column) in {
                 "zula pass", "0 kul. testi", "genel check", "hata bildirimi", "öneri bildirimi",
                 "discord pc", "hakemlik", "diğer/kanaat"
@@ -292,13 +302,20 @@ class QAReportWorker:
             for column in score_columns:
                 report_data[column] = pd.to_numeric(report_data[column].astype(str).str.replace(",", "."), errors="coerce").fillna(0)
             if score_columns:
+                if "Toplam" not in report_data.columns:
+                    report_data["Toplam"] = 0
+                if "ZA" not in report_data.columns:
+                    report_data["ZA"] = 0
                 report_data["Toplam"] = report_data[score_columns].sum(axis=1).astype(int)
                 report_data["ZA"] = report_data["Toplam"] * 500
 
             self.progress_callback(85)
             output = report_data.fillna("")
             report_sheet.clear()
-            report_sheet.update(range_name="A1", values=[output.columns.tolist()] + output.astype(str).values.tolist())
+            report_sheet.update(
+                values=[output.columns.tolist()] + output.astype(str).values.tolist(),
+                range_name="A1",
+            )
             self.progress_callback(100)
             self.log_callback(f"✅ E-posta eşleştirmesi [{report_sheet.title}] sekmesine yazıldı.")
             return report_data
@@ -307,7 +324,7 @@ class QAReportWorker:
             return None
 
 
-def process_za_and_insert_month(main_ws, target_month_name, selected_year=2026, selected_language="ENG", log_func=print):
+def process_za_and_insert_month(main_ws, target_month_name, selected_year=2026, selected_language=None, log_func=print):
     try:
         target_ws = _find_target_worksheet(main_ws.spreadsheet, selected_language, target_month_name, selected_year, log_func, False)
         if not target_ws:
@@ -334,7 +351,7 @@ def process_za_and_insert_month(main_ws, target_month_name, selected_year=2026, 
                 row[za_index] = za_by_user[row[0].strip()]
             rows.append(row)
         target_ws.clear()
-        target_ws.update(range_name="A1", values=rows)
+        target_ws.update(values=rows, range_name="A1")
         log_func(f"✅ Veriler başarıyla [{target_ws.title}] sekmesine yazıldı!")
         return True
     except Exception as error:
