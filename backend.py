@@ -1,4 +1,4 @@
-import difflib
+﻿import difflib
 import re
 import unicodedata
 
@@ -105,7 +105,11 @@ def _nick_match(source_nick, report_nick):
         return False
     if source_nick == report_nick:
         return True
-    # En az 4 karakterli nicklerde harf hatası toleransı (ör. Devi1to vs Dev1to, SrDjaaaaaa vs SrDjaaaaaaaa)
+    sa = _ascii_casefold(source_nick).strip()
+    sb = _ascii_casefold(report_nick).strip()
+    if len(sa) >= 3 and len(sb) >= 3:
+        if sa == sb or sa in sb or sb in sa:
+            return True
     if len(source_nick) >= 4 and len(report_nick) >= 4:
         ratio = difflib.SequenceMatcher(None, source_nick, report_nick).ratio()
         if ratio >= 0.82:
@@ -141,7 +145,14 @@ def _looks_like_date(value):
 
 
 def _date_parts(value):
-    """'16.09.2026', '2026-09-16' gibi değerlerden (yıl, ay) döndürür."""
+    """Tarih metninden (yıl, ay) döndürür.
+
+    Desteklenen biçimler:
+    - '16.09.2026', '16/09/2026', '16-09-2026' (gün.ay.yıl)
+    - '2026-09-16' (yıl-ay-gün)
+    - '09/16/2026 14:57:41' gibi ABD biçimi (ay/gün/yıl + saat) — Google
+      Forms zaman damgaları bu biçimde gelebilir.
+    """
     text = str(value or "").strip()
     if not text:
         return None
@@ -152,12 +163,29 @@ def _date_parts(value):
         match = _DATE_DMY_RE.match(text)
         if not match:
             return None
-        month, year = int(match.group(2)), int(match.group(3))
+        first, second = int(match.group(1)), int(match.group(2))
+        year = int(match.group(3))
         if year < 100:
             year += 2000
+        separator = match.group(0)[len(match.group(1))]
+        if separator == "/" and first <= 12:
+            # ABD biçimi ay/gün/yıl (örn. 09/16/2026 14:57:41); ancak
+            # gün.ay.yıl biçiminde de ilk sayı <= 12 olabilir. İkinci sayı
+            # 12'den büyükse kesinlikle ABD biçimidir.
+            if second > 12 or _looks_like_us_datetime(text):
+                month = first
+            else:
+                month = second
+        else:
+            month = second
     if not 1 <= month <= 12 or not 1990 <= year <= 2100:
         return None
     return year, month
+
+
+def _looks_like_us_datetime(text):
+    """'09/16/2026 14:57:41' gibi ABD tarih+saat biçimini yakalar."""
+    return bool(re.match(r"^\s*\d{1,2}/\d{1,2}/\d{2,4}\s+\d{1,2}:\d{2}", text))
 
 
 def _index_of_keyword(columns, keywords):
@@ -183,7 +211,7 @@ def _find_person_columns(headers):
 
 
 def _find_date_column_index(headers, rows, skip_indexes=()):
-    """Önce başlık adına, bulunamazsa verinin tarih formatına göre tarih sütununu bulur."""
+    by_header = _index_of_keyword(headers, DATE_HEADER_KEYWORDS)
     by_header = _index_of_keyword(headers, DATE_HEADER_KEYWORDS)
     if by_header is not None and by_header not in skip_indexes:
         return by_header
@@ -197,7 +225,7 @@ def _find_date_column_index(headers, rows, skip_indexes=()):
             if not value:
                 continue
             checked += 1
-            if _looks_like_date(value):
+            if _looks_like_date(value) or _looks_like_us_datetime(value):
                 hits += 1
         if checked < 3 or hits < 3:
             continue
@@ -273,22 +301,36 @@ def _display_number(value):
         return value
     return int(number) if number.is_integer() else number
 
+def _match_score(row_tokens, row_nick, row_full, tokens, nick, raw_name):
+    """Bir hedef satırın kaynak kayda ne kadar benzediğini puanlar (0 = eşleşme yok)."""
+    score = 0
+    if nick and row_nick and _nick_match(nick, row_nick):
+        score += 100
+    if tokens and _name_match(tokens, row_tokens):
+        score += 50
+    rn = _ascii_casefold(raw_name).strip()
+    rf = _ascii_casefold(row_full).strip()
+    if rn and rf and len(rn) >= 3 and len(rf) >= 3:
+        if rn == rf or rn in rf or rf in rn:
+            score += 30
+    return score
 
-def _find_report_row(row_records, tokens, nick):
-    """Kaynak kaydına karşılık gelen hedef satırı bulur (dolu satırlar tercih edilir)."""
+
+def _find_report_row_scored(row_records, tokens, nick, raw_name):
+    """En yüksek skorlu satırın indeksini döndürür; hiç eşleşme yoksa None.
+
+    row_records elemanları: (row_tokens, row_nick, has_identity_cell, row_full)
+    """
     best_index = None
-    for index, (row_tokens, row_nick, has_identity_cell) in enumerate(row_records):
-        matched = False
-        if nick and row_nick:
-            matched = _nick_match(nick, row_nick)
-        if not matched and tokens:
-            matched = _name_match(tokens, row_tokens)
-        if not matched:
-            continue
-        if best_index is None or (has_identity_cell and not row_records[best_index][2]):
+    best_score = 0
+    for index, rec in enumerate(row_records):
+        score = _match_score(rec[0], rec[1], rec[3], tokens, nick, raw_name)
+        if score > 0 and rec[2]:
+            # Kimlik hücresi (A sütunu) dolu satırlar önce tercih edilir.
+            score += 5
+        if score > best_score:
+            best_score = score
             best_index = index
-        if row_records[best_index][2]:
-            break
     return best_index
 
 
@@ -498,6 +540,41 @@ def append_audit_log(creds_input, spreadsheet_id, worksheet_title, user_name, ac
     ])
 
 
+def _batch_write_cells(report_sheet, updates, log_callback, progress_callback):
+    """Hücre güncellemelerini batch_update ile yazar ve sonucu doğrular.
+
+    gspread 6.x'te value_input_option enum olarak verilmelidir; string
+    verildiğinde API bunu reddedebilir. Yazma sonrası yanıtın
+    totalUpdatedCells değeri loglanır.
+    """
+    from gspread.utils import ValueInputOption
+
+    total_batches = max(1, (len(updates) + 99) // 100)
+    total_updated_cells = 0
+    for batch_idx, start in enumerate(range(0, len(updates), 100)):
+        chunk = updates[start:start + 100]
+        response = report_sheet.batch_update(
+            chunk, value_input_option=ValueInputOption.user_entered
+        )
+        try:
+            total_updated_cells += int(response.get("totalUpdatedCells", 0))
+        except Exception:
+            pass
+        write_pct = 80 + int(((batch_idx + 1) / total_batches) * 10)
+        progress_callback(write_pct, f"Puanlar kaydediliyor... (%{write_pct})")
+    log_callback(
+        f"📝 Yazma yanıtı: {total_batches} batch, "
+        f"{total_updated_cells} hücre güncellendi (API onayı)."
+    )
+    if total_updated_cells == 0 and updates:
+        log_callback(
+            "❌ API 0 hücre güncellediğini bildirdi; hedef sekme/sütun "
+            "aralığı doğrulanamadı, yazma başarısız sayıldı."
+        )
+        return False
+    return True
+
+
 def _find_target_worksheet(wb, language, month_name, year, log_callback=print, create_if_missing=True, source_columns=None):
     candidates = [
         worksheet for worksheet in wb.worksheets()
@@ -535,24 +612,29 @@ class QAReportWorker:
         self.selected_language = selected_language
         self.target_worksheet_title = target_worksheet_title
         self.log_callback = log_callback
-        self.progress_callback = progress_callback or (lambda value: None)
+        self.progress_callback = progress_callback or (lambda value, text=None: None)
         self.used_worksheet_title = None
 
     def _collect_source_records(self, client, target_month, target_year):
         """Kaynak form sekmelerini (tarih sütununa göre) tarar ve kategori bazlı kayıt toplar."""
         source_workbook = client.open_by_key(self.source_id)
         records = {category: [] for category in CATEGORY_LABELS}
-        scanned_sheets = 0
         all_sheets = source_workbook.worksheets()
         total_sheets = max(1, len(all_sheets))
+        skipped_hidden = 0
+        skipped_no_category = []
+        skipped_no_date = []
+        skipped_no_person = []
         for sheet_idx, worksheet in enumerate(all_sheets):
             # 5% ile 45% arasını kaynak sekme okumaya paylaştırıyoruz
             current_pct = 5 + int((sheet_idx / total_sheets) * 40)
             self.progress_callback(current_pct, f"Kaynak sekmeler taranıyor... (%{current_pct})")
             if _is_hidden(worksheet):
+                skipped_hidden += 1
                 continue
             category = _category_for_title(worksheet.title)
             if not category:
+                skipped_no_category.append(worksheet.title)
                 continue
             values = worksheet.get_all_values()
             if len(values) < 2:
@@ -562,8 +644,10 @@ class QAReportWorker:
             name_index, nick_index = _find_person_columns(headers)
             date_index = _find_date_column_index(headers, data_rows, skip_indexes=(name_index, nick_index))
             if date_index is None:
+                skipped_no_date.append(worksheet.title)
                 continue
             if name_index is None and nick_index is None:
+                skipped_no_person.append(worksheet.title)
                 continue
             selected = 0
             for row in data_rows:
@@ -575,7 +659,30 @@ class QAReportWorker:
                     continue
                 records[category].append((_name_tokens(name), _nick_key(nick), name, nick))
                 selected += 1
-            scanned_sheets += 1
+            self.log_callback(
+                f"📄 [{worksheet.title}] → {CATEGORY_LABELS[category]}: "
+                f"{selected} kayıt seçildi ({target_month:02d}.{target_year})."
+            )
+        total_found = sum(len(entries) for entries in records.values())
+        self.log_callback(
+            f"📥 Kaynak tarama özeti: {len(all_sheets)} sekme tarandı, "
+            f"{total_found} kayıt bulundu "
+            f"({', '.join(f'{CATEGORY_LABELS[c]}: {len(records[c])}' for c in CATEGORY_LABELS)})."
+        )
+        if skipped_hidden:
+            self.log_callback(f"🙈 {skipped_hidden} gizli sekme atlandı.")
+        if skipped_no_category:
+            self.log_callback(
+                "⚠️ Kategori eşleşmeyen sekmeler (taranmadı): " + ", ".join(skipped_no_category[:10])
+            )
+        if skipped_no_date:
+            self.log_callback(
+                "⚠️ Tarih sütunu bulunamayan sekmeler (taranmadı): " + ", ".join(skipped_no_date[:10])
+            )
+        if skipped_no_person:
+            self.log_callback(
+                "⚠️ İsim/Nick sütunu bulunamayan sekmeler (taranmadı): " + ", ".join(skipped_no_person[:10])
+            )
         return records
 
     def process(self, dry_run=False):
@@ -641,8 +748,9 @@ class QAReportWorker:
             self.progress_callback(65, "Kayıtlar ve personeller eşleştiriliyor... (%65)")
 
             # Sadece geçerli personel satırlarını al (alt özet/header satırlarını hariç tut)
-            cleaned_data_rows = []
-            for row in data_rows:
+            kept_rows = []
+            kept_sheet_idx = []  # filtered->sheet map
+            for _si, row in enumerate(data_rows):
                 name_val = _cell(row, name_index)
                 nick_val = _cell(row, nick_index)
                 # Satır başlık veya alt özet satırıysa eşleşmeye dahil etme
@@ -651,11 +759,17 @@ class QAReportWorker:
                     # Eğer ad sütununun kendisi 'ad soyad' veya 'member id' ise bu bir alt başlık satırıdır
                     if _normalized(name_val) in NON_SCORE_EXACT or _normalized(nick_val) in NON_SCORE_EXACT:
                         continue
-                cleaned_data_rows.append(row)
-            data_rows = cleaned_data_rows
+                kept_rows.append(row)
+                kept_sheet_idx.append(_si)
+            data_rows = kept_rows
 
             row_records = [
-                (_name_tokens(_cell(row, name_index)), _nick_key(_cell(row, nick_index)), bool(_cell(row, 0)))
+                (
+                    _name_tokens(_cell(row, name_index)),
+                    _nick_key(_cell(row, nick_index)),
+                    bool(_cell(row, 0)),
+                    _cell(row, name_index),
+                )
                 for row in data_rows
             ]
             pending = {}
@@ -672,7 +786,7 @@ class QAReportWorker:
                     continue
                 counts = {}
                 for tokens, nick, name, raw_nick in entries:
-                    row_index = _find_report_row(row_records, tokens, nick)
+                    row_index = _find_report_row_scored(row_records, tokens, nick, name)
                     if row_index is None:
                         unmatched[category].append((name, raw_nick, tokens, nick))
                         continue
@@ -718,10 +832,10 @@ class QAReportWorker:
                         if column_index in (toplam_index, za_index):
                             continue
                         updates.append({
-                            "range": f"{_column_letter(column_index)}{row_index + 2}",
+                            "range": f"{_column_letter(column_index)}{kept_sheet_idx[row_index] + 2}",
                             "values": [[pending[row_index][column_index]]],
                         })
-                next_row_index = len(data_rows)
+                next_row_index = max(kept_sheet_idx)+1 if kept_sheet_idx else len(data_rows)
                 for entry in new_entries.values():
                     sheet_row = next_row_index + 2
                     row_values = [""] * len(headers)
@@ -739,16 +853,21 @@ class QAReportWorker:
                     })
                     appended_names.append(entry["name"] or entry["nick"])
                     next_row_index += 1
-                if updates:
-                    try:
-                        total_batches = max(1, (len(updates) + 99) // 100)
-                        for batch_idx, start in enumerate(range(0, len(updates), 100)):
-                            report_sheet.batch_update(updates[start:start + 100], value_input_option="USER_ENTERED")
-                            write_pct = 80 + int(((batch_idx + 1) / total_batches) * 10)
-                            self.progress_callback(write_pct, f"Puanlar kaydediliyor... (%{write_pct})")
-                    except Exception as error:
-                        self.log_callback(f"❌ Sekmeye yazma hatası: {error}")
+                if not updates:
+                    self.log_callback(
+                        "❌ Yazılacak hücre bulunamadı (eşleşen satır/sütun yok); "
+                        "hedef sekme değiştirilmedi. İsim/nick eşleşmesi ve puan "
+                        "sütunu adlarını kontrol edin."
+                    )
+                    return None
+                try:
+                    if not _batch_write_cells(
+                        report_sheet, updates, self.log_callback, self.progress_callback
+                    ):
                         return None
+                except Exception as error:
+                    self.log_callback(f"❌ Sekmeye yazma hatası: {error}")
+                    return None
 
             self.progress_callback(92, "Sonuç tablosu hazırlanıyor... (%92)")
             display_headers = _unique_headers(headers)
