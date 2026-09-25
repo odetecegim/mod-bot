@@ -5,6 +5,7 @@ import hmac
 import inspect
 from datetime import datetime
 
+import pandas as pd
 import streamlit as st
 
 import backend
@@ -15,7 +16,6 @@ from backend import (
     get_member_za_summary,
     get_visible_worksheet_titles,
     read_visible_worksheet,
-    update_visible_worksheet,
     append_audit_log,
 )
 
@@ -122,7 +122,7 @@ if st.sidebar.button("Çıkış Yap"):
 st.sidebar.markdown("---")
 selected_page = st.sidebar.radio(
     "Menü",
-    ["🚀 QA Rapor Güncelleme", "✏️ Canlı Tablo Düzenle"],
+    ["🚀 QA Rapor Güncelleme", "📊 Aylık Perf Listesi"],
     index=0,
 )
 
@@ -236,51 +236,102 @@ except Exception as error:
     st.sidebar.error(f"❌ ZA paneli hatası: {error}")
 
 
-if selected_page == "✏️ Canlı Tablo Düzenle":
-    st.subheader("✏️ Açık Google Sheets Sekmesini Canlı Düzenle")
+if selected_page == "📊 Aylık Perf Listesi":
+    st.subheader("📊 Aylık Perf Listesi (Toplu)")
     st.caption(
-        "Gizli ve araç günlük sekmeleri listelenmez. Kaydet düğmesi, yaptığınız "
-        "değişiklikleri doğrudan seçilen sekmeye yazar."
+        "Global Perf Tablosu'ndaki tüm açık performans sekmeleri taranır; "
+        "ay ay kimin ne kadar perf (ZA) aldığını tek listede gösterir. "
+        "ZA girişi olmayan kişiler listelenmez."
     )
-    editor_spreadsheet_name = st.selectbox("Düzenlenecek tablo", sheet_names, key="editor_spreadsheet")
+    if st.button("🔄 Yenile", key="bulk_perf_refresh"):
+        fetch_worksheet_data.clear()
+        fetch_visible_worksheets.clear()
+        st.rerun()
     try:
-        editor_spreadsheet_id = spreadsheet_dict[editor_spreadsheet_name]
-        visible_worksheets = fetch_visible_worksheets(active_json_path, editor_spreadsheet_id)
-        if not visible_worksheets:
-            st.info("Bu tabloda düzenlenebilir açık sekme bulunamadı.")
-        else:
-            editor_worksheet_name = st.selectbox(
-                "Açık sekme", visible_worksheets, key=f"editor_worksheet_{editor_spreadsheet_id}"
-            )
-            editor_data = read_visible_worksheet(active_json_path, editor_spreadsheet_id, editor_worksheet_name)
-            viewed_editor_key = f"viewed_{editor_spreadsheet_id}_{editor_worksheet_name}"
-            if not st.session_state.get(viewed_editor_key):
-                audit_log(current_user, "Sekme görüntüledi", f"{editor_spreadsheet_name} / {editor_worksheet_name}")
-                st.session_state[viewed_editor_key] = True
-            editor_flash = st.session_state.pop("editor_flash", None)
-            if editor_flash:
-                st.success(editor_flash)
-            updated_editor_data = st.data_editor(
-                editor_data,
-                num_rows="dynamic",
-                hide_index=True,
-                use_container_width=True,
-                key=f"data_editor_{editor_spreadsheet_id}_{editor_worksheet_name}",
-            )
-            if st.button("💾 Değişiklikleri Canlı Kaydet", key=f"save_{editor_spreadsheet_id}_{editor_worksheet_name}"):
-                update_visible_worksheet(
-                    active_json_path, editor_spreadsheet_id, editor_worksheet_name, updated_editor_data
-                )
-                audit_log(current_user, "Sekme düzenledi", f"{editor_spreadsheet_name} / {editor_worksheet_name}")
-                st.session_state["editor_flash"] = f"✅ [{editor_worksheet_name}] sekmesindeki değişiklikler kaydedildi."
-                fetch_visible_worksheets.clear()
-                st.rerun()
+        bulk_spreadsheet_name = "Global Perf Tablosu" if "Global Perf Tablosu" in sheet_names else sheet_names[0]
+        bulk_spreadsheet_id = spreadsheet_dict[bulk_spreadsheet_name]
+        bulk_tabs = fetch_visible_worksheets(active_json_path, bulk_spreadsheet_id, filter_performance=True)
     except Exception as error:
-        try:
-            audit_log(current_user, "Sekme işlemi hatası", str(error), "Başarısız")
-        except Exception:
-            pass
-        st.error(f"❌ Sekme düzenleme hatası: {error}")
+        bulk_tabs = []
+        st.error(f"❌ Sekme listesi alınamadı: {error}")
+    if not bulk_tabs:
+        st.info("Açık performans sekmesi bulunamadı.")
+    else:
+        parts = []
+        skipped = []
+        with st.spinner("Aylık perf sekmeleri okunuyor..."):
+            for tab_title in bulk_tabs:
+                try:
+                    frame = fetch_worksheet_data(active_json_path, bulk_spreadsheet_id, tab_title)
+                    summary, has_columns = get_member_za_summary(frame)
+                    if not has_columns:
+                        skipped.append(f"{tab_title} — Member ID veya ZA sütunu bulunamadı")
+                        continue
+                    if summary.empty:
+                        continue
+                    za_column = "ZA" if "ZA" in summary.columns else summary.columns[-1]
+                    part = summary.rename(columns={za_column: "ZA"}).copy()
+                    part.insert(0, "Sekme", tab_title)
+                    part["_za_sort"] = part["ZA"].map(_za_number)
+                    parts.append(part.sort_values("_za_sort", ascending=False))
+                except Exception as error:
+                    skipped.append(f"{tab_title} — {error}")
+        if skipped:
+            with st.expander(f"⚠️ Atlanan sekmeler ({len(skipped)})"):
+                for line in skipped:
+                    st.caption(line)
+        if not parts:
+            st.info("Hiçbir sekmede ZA kaydı bulunamadı.")
+        else:
+            bulk_table = pd.concat(parts, ignore_index=True)
+            monthly_summary = []
+            for tab_title in bulk_tabs:
+                rows = bulk_table[bulk_table["Sekme"] == tab_title]
+                if rows.empty:
+                    continue
+                values = [float(value) for value in rows["_za_sort"] if value != float("-inf")]
+                monthly_summary.append({
+                    "Sekme": tab_title,
+                    "Kişi": len(rows),
+                    "Toplam ZA": sum(values),
+                    "En yüksek ZA": max(values) if values else 0,
+                    "Ortalama ZA": round(sum(values) / len(values), 1) if values else 0,
+                })
+            df_month = pd.DataFrame(monthly_summary)
+
+            group_cols = [col for col in bulk_table.columns if col not in ("Sekme", "ZA", "_za_sort")]
+            group_frame = bulk_table.copy()
+            for col in group_cols:
+                # Aynı kişi farklı sekmelerde boş e-posta/NaN olarak bölünmesin.
+                group_frame[col] = group_frame[col].fillna("").astype(str).str.strip()
+            person_totals = (
+                group_frame.groupby(group_cols, dropna=False)["_za_sort"]
+                .agg(Toplam_ZA="sum", Kaç_Ay="count")
+                .reset_index()
+                .rename(columns={"Toplam_ZA": "Toplam ZA", "Kaç_Ay": "Aldığı ay"})
+                .sort_values("Toplam ZA", ascending=False)
+            )
+
+            total_za = sum(float(value) for value in bulk_table["_za_sort"] if value != float("-inf"))
+            st.caption(
+                f"📈 Genel toplam: {total_za:,.0f} ZA · {len(bulk_table)} kayıt · "
+                f"{len(person_totals)} kişi · {len(df_month)} sekme"
+            )
+            tab_month, tab_bulk, tab_person = st.tabs(
+                ["📅 Aylık Özet", "📋 Toplu Liste", "👤 Kişi Toplamları"]
+            )
+            with tab_month:
+                st.dataframe(df_month, hide_index=True, use_container_width=True)
+            with tab_bulk:
+                st.dataframe(bulk_table.drop(columns=["_za_sort"]), hide_index=True, use_container_width=True)
+            with tab_person:
+                st.dataframe(person_totals, hide_index=True, use_container_width=True)
+            st.download_button(
+                "📥 Toplu listeyi CSV indir",
+                bulk_table.drop(columns=["_za_sort"]).to_csv(index=False).encode("utf-8-sig"),
+                file_name="aylik_perf_listesi.csv",
+                mime="text/csv",
+            )
 
 else:
     st.subheader("🚀 QA Rapor Güncelleme")
